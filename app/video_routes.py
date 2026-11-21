@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from app.platforms.base import PlatformError
 from app.schemas import VideoResponse
+from app.tenancy import identity
 
 
 async def probe_video(path):
@@ -50,6 +51,8 @@ def router(settings, authorize):
 
     @routes.post("/video/accounts/{platform}/connect", tags=["Video"], dependencies=[Depends(authorize)])
     async def connect(platform: Literal["youtube", "instagram", "tiktok"], request: Request):
+        if settings.saas_enabled and str(request.base_url).rstrip('/') != settings.app_base_url:
+            raise HTTPException(400, f"Open Dispatch at {settings.app_base_url} before connecting so sign-in returns to this browser session.")
         try:
             url, state = request.app.state.video_accounts.start(platform)
         except PlatformError as error:
@@ -62,6 +65,8 @@ def router(settings, authorize):
     @routes.get("/oauth/{platform}/callback", include_in_schema=False)
     async def callback(platform: Literal["youtube", "instagram", "tiktok"], request: Request,
                        state: str = "", code: str = "", error: str = ""):
+        if settings.saas_enabled and not identity.get():
+            raise HTTPException(401, "Sign in again before reconnecting this account.")
         cookie = request.cookies.get("oauth_" + platform, "")
         if not state or not secrets.compare_digest(cookie, state):
             raise HTTPException(400, "OAuth state mismatch. Start Connect again from this browser.")
@@ -110,6 +115,8 @@ def router(settings, authorize):
         disable_stitch: Annotated[bool, Form()] = True,
         idempotency_key: Annotated[str | None, Header()] = None,
     ):
+        if settings.saas_enabled and idempotency_key is None:
+            idempotency_key = secrets.token_hex(16)
         if not consent:
             raise HTTPException(422, "Confirm that you want to publish this video to the connected platforms.")
         if not title.strip():
@@ -144,7 +151,7 @@ def router(settings, authorize):
                                made_for_kids, disable_comment, disable_duet, disable_stitch])
         try:
             if idempotency_key is not None:
-                previous = request.app.state.store.claim(idempotency_key, identity)
+                previous = request.app.state.store.claim(idempotency_key, identity, kind="video", title=title)
                 if previous:
                     path.unlink(missing_ok=True)
                     return previous

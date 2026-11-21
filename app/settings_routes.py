@@ -3,12 +3,14 @@ from dataclasses import replace
 from contextvars import ContextVar
 import ipaddress
 import re
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter
 
 from app.platforms.base import PlatformError, checked
+from app.tenancy import identity, workspace
 
 # The browser receives field metadata and saved flags, never stored secret values.
 FIELDS = {
@@ -37,7 +39,21 @@ class RuntimeSettings:
         self.context = ContextVar('dispatch_settings', default=None)
 
     def snapshot(self):
-        return replace(self.baseline, **(self.store.settings() if self.store else {}))
+        values = self.store.settings() if self.store else {}
+        base = self.baseline
+        if base.saas_enabled:
+            # Social credentials belong to workspaces; developer apps belong to the operator.
+            base = replace(base, mastodon_token='', bluesky_identifier='', bluesky_password='', telegram_token='', telegram_channel='')
+            if self.store:
+                token = workspace.set('')
+                try:
+                    shared = self.store.settings()
+                finally:
+                    workspace.reset(token)
+                keys = {'google_client_id','google_client_secret','instagram_app_id','instagram_app_secret','tiktok_client_key','tiktok_client_secret','app_base_url','public_media_base_url'}
+                base = replace(base, **{key:value for key,value in shared.items() if key in keys})
+                values = {key:value for key,value in values.items() if key not in keys}
+        return replace(base, **values)
 
     def __getattr__(self, name):
         return getattr(self.context.get() or self.snapshot(), name)
@@ -80,11 +96,13 @@ def router(settings, authorize):
         if platform not in FIELDS:
             raise HTTPException(404, 'Unknown platform.')
         current = settings.snapshot()
+        customer_video = settings.saas_enabled and platform in ('youtube','instagram','tiktok') and not (identity.get() or {}).get('admin')
         return {
+            'managed': customer_video,
             'platform': platform, 'help': HELP[platform],
             'fields': [{'name': key, 'label': label, 'secret': secret,
                         'saved': bool(getattr(current, key)),
-                        'value': '' if secret else getattr(current, key)} for key, label, secret in FIELDS[platform]],
+                        'value': '' if secret else getattr(current, key)} for key, label, secret in ([] if customer_video else FIELDS[platform])],
             'redirect_uri': current.app_base_url + f'/oauth/{platform}/callback' if platform in ('youtube','instagram','tiktok') else None,
         }
 
@@ -95,6 +113,9 @@ def router(settings, authorize):
     @routes.put('/{platform}')
     async def save_settings(platform: str, payload: SettingsUpdate, request: Request):
         metadata(platform)
+        shared = settings.saas_enabled and platform in ('youtube','instagram','tiktok')
+        if shared and not identity.get()['admin']:
+            raise HTTPException(403, 'Developer apps are managed by the administrator. Use Connect to authorize your own account.')
         allowed = {key: secret for key, _, secret in FIELDS[platform]}
         if set(payload.values) - set(allowed):
             raise HTTPException(422, 'Unsupported settings field.')
@@ -103,10 +124,24 @@ def router(settings, authorize):
                       if value.strip() or not allowed[key]}
         except ValueError:
             raise HTTPException(422, 'Invalid setting. Use public HTTPS origin URLs (HTTP localhost is allowed for the application address), a valid @channel, and values without control characters.') from None
+        if settings.saas_enabled:
+            for key in ('mastodon_url','bluesky_url'):
+                if key in values and urlsplit(values[key]).hostname not in settings.social_allowed_hosts:
+                    raise HTTPException(422, 'This social server is not enabled. Ask your administrator to approve its hostname.')
         current = settings.snapshot()
         changed_app = platform in ('youtube', 'instagram', 'tiktok') and any(
             getattr(current, key) != value for key, value in values.items() if key != 'public_media_base_url')
-        request.app.state.store.save_settings(values, platform if changed_app else None)
+        token = workspace.set('') if shared else None
+        try:
+            request.app.state.store.save_settings(values, platform if changed_app else None)
+        finally:
+            if token is not None:
+                workspace.reset(token)
+        if shared and changed_app:
+            # Invalidate every tenant's tokens when the operator rotates the shared app.
+            with request.app.state.store.connect() as db:
+                db.execute("DELETE FROM accounts WHERE platform LIKE ?", ('%:' + platform,))
+                db.execute("DELETE FROM oauth_states WHERE platform LIKE ?", ('%:' + platform,))
         return {**metadata(platform), 'message': 'Saved. Connect again to authorize the updated app.' if changed_app else 'Saved. Settings are active immediately.'}
 
     @routes.post('/{platform}/test')

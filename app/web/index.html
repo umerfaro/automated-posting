@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dispatch — Multi-platform posting</title>
+<title>Dispatch — Your publishing workspace</title><link rel="stylesheet" href="/assets/saas.css">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono&display=swap');
 :root{--ink:#152e2c;--muted:#6c7e7a;--line:#dce5df;--paper:#f5f7f2;--green:#126548;--lime:#dbf484}
@@ -42,7 +42,7 @@ footer{display:flex;justify-content:space-between;gap:16px;margin-top:40px;paddi
 dialog{color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:28px;width:540px;max-width:calc(100vw - 32px);max-height:90vh}dialog::backdrop{background:#152e2c80}.setup-guide{background:var(--paper);padding:16px;border-radius:9px;font-size:13px;line-height:1.65}.setup-guide nav{display:flex;flex-wrap:wrap;gap:8px 16px}.setup-guide a{color:var(--green);font-weight:600;text-underline-offset:3px}.setup-guide ol{padding-left:20px;margin:12px 0 0}.setup-guide li+li{margin-top:5px}dialog form{display:grid;gap:16px}dialog h2{margin:0}dialog p{line-height:1.65;color:var(--muted);font-size:13px;margin:0}dialog label{margin-bottom:7px}dialog code{display:block;overflow-wrap:anywhere;background:var(--paper);padding:12px;border-radius:8px;font-size:12px}.dialog-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.dialog-head button{background:none;border:0;font-size:24px;color:var(--muted)}.setup-fields{display:grid;gap:16px}
 </style>
 </head>
-<body>
+<body class="booting">
 <header><div class="logo"><span class="mark">↗</span>dispatch</div><nav><a href="/docs" target="_blank" rel="noopener">API documentation ↗</a></nav><span class="api">POST /posting</span></header>
 <main>
 <div class="intro"><span class="eyebrow">Multi-platform publishing</span><h1 id="intro-title">One message.<br>Three destinations.</h1><p id="intro-description">Publish a short update with a single call to action. Get a delivery result for every platform.</p></div>
@@ -118,6 +118,7 @@ async function configure() {
 }
 function report(data) {
   $("results").hidden = false; $("response").textContent = JSON.stringify(data, null, 2);
+  if (typeof refreshDashboard === "function") refreshDashboard();
   const successes = data.results.filter(result => result.status === "success").length;
   $("summary").textContent = successes + " of " + data.results.length + " published";
   $("result-grid").replaceChildren();
@@ -145,12 +146,12 @@ $("composer").addEventListener("submit", async event => {
   lastMessage = message;
   $("send").disabled = true; $("send").textContent = "Publishing…";
   try {
-    const headers = {"Content-Type":"application/json", "Idempotency-Key":requestKey};
+    const headers = {...apiHeaders(), "Content-Type":"application/json", "Idempotency-Key":requestKey};
     if ($("api-key").value) headers["X-API-Key"] = $("api-key").value;
     const response = await fetch("/posting", {method:"POST", headers, body:JSON.stringify({message})});
     const data = await response.json();
     if (!response.ok) {
-      if (response.status === 422 || response.status === 401) { requestKey = null; uncertain = false; }
+      if ([401,402,403,422].includes(response.status)) { requestKey = null; uncertain = false; }
       else uncertain = true;
       throw new Error(Array.isArray(data.detail) ? data.detail.map(item => item.msg).join("\n") : (data.detail || "Request failed."));
     }
@@ -162,7 +163,7 @@ $("composer").addEventListener("submit", async event => {
 });
 let videoKey = null, videoIdentity = null, videoUncertain = false, previewUrl = null;
 function apiHeaders() {
-  return $("api-key").value ? {"X-API-Key": $("api-key").value} : {};
+  return {...($("api-key").value ? {"X-API-Key": $("api-key").value} : {}), ...(typeof session !== "undefined" && session?.csrf ? {"X-CSRF-Token":session.csrf} : {})};
 }
 async function jsonResponse(response) {
   const data = await response.json();
@@ -174,12 +175,16 @@ async function videoAccounts() {
     const data = await jsonResponse(await fetch("/video/accounts", {headers:apiHeaders()}));
     $("video-limit").textContent = "H.264 MP4 · up to 180 seconds · " + data.max_video_mb + " MB maximum";
     $("video-accounts").replaceChildren();
+    const videoNote = $("video-workspace").querySelector('.side-note');
+    if(window.dispatchUser) videoNote.textContent = window.dispatchUser.admin
+      ? "Configure shared developer apps once using Set up. Each customer connects their own accounts. Instagram requires a public HTTPS media address."
+      : "Connect your own social accounts through each platform’s sign-in page. Your administrator manages the developer apps. Account permissions and platform limits still apply.";
     let connectedTikTok = false;
     for (const account of data.accounts) {
       const row = document.createElement("div"); row.className = "connection";
       const title = document.createElement("strong"); title.textContent = account.name;
       const status = document.createElement("small");
-      status.textContent = account.connected ? "Connected · " + account.account_name : account.configured ? "Ready to connect" : "Developer app setup required";
+      status.textContent = account.connected ? "Connected · " + account.account_name : account.configured ? "Ready to connect" : (window.dispatchUser && !window.dispatchUser.admin ? "Administrator setup needed" : "Developer app setup required");
       const connect = document.createElement("button"); connect.type = "button"; connect.className = "connect"; connect.textContent = account.connected ? "Reconnect" : "Connect"; connect.disabled = !account.configured;
       connect.addEventListener("click", async () => {
         try {
@@ -236,7 +241,7 @@ $("video-composer").addEventListener("submit", async event => {
     const response=await fetch("/video-posting",{method:"POST",headers:{...apiHeaders(),"Idempotency-Key":videoKey},body:form});
     const data=await jsonResponse(response);
     videoUncertain=false; report(data);
-  } catch (e) { videoUncertain=![401,413,422].includes(e.status); if (!videoUncertain) videoKey=null; $("video-error").hidden=false; $("video-error").textContent=e.message; }
+  } catch (e) { videoUncertain=![401,402,403,413,422].includes(e.status); if (!videoUncertain) videoKey=null; $("video-error").hidden=false; $("video-error").textContent=e.message; }
   finally { $("video-send").disabled=false; $("video-send").innerHTML='Publish video <span aria-hidden="true">↗</span>'; }
 });
 
@@ -255,6 +260,8 @@ function connectionActions(platform) {
     finally { test.disabled = false; }
   });
   const container = document.createElement("div"); container.append(setup, test, feedback);
+  if (["youtube","instagram","tiktok"].includes(platform) && window.dispatchUser && !window.dispatchUser.admin) setup.hidden=true;
+  if(window.dispatchUser){const disconnect=document.createElement("button");disconnect.className="connect";disconnect.type="button";disconnect.textContent="Disconnect";disconnect.onclick=async()=>{if(!confirm("Disconnect this platform from the current workspace?"))return;try{await saasRequest("/connections/"+platform,"DELETE");configure();if(!$("video-workspace").hidden)videoAccounts();}catch(e){feedback.textContent=e.message;}};container.append(disconnect);}
   actions.append(container); return actions;
 }
 const setupGuides = {
@@ -346,7 +353,7 @@ $("settings-form").addEventListener("submit", async event => {
   finally { $("settings-save").disabled = false; }
 });
 $("api-key").addEventListener("change", () => { configure(); if (!$("video-workspace").hidden) videoAccounts(); });
-configure();
 </script>
+<script src="/assets/saas.js"></script>
 </body>
 </html>

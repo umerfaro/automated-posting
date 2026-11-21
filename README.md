@@ -1,118 +1,114 @@
-# Dispatch — Automated Multi-Platform Posting
+# Dispatch SaaS
 
-A Python 3.10+ and FastAPI assessment with a browser interface. A validated message is sent independently to Mastodon, Bluesky and a Telegram public channel. A separate video flow sends an uploaded MP4 to connected YouTube, Instagram and TikTok accounts.
+A FastAPI publishing SaaS MVP with user accounts, isolated workspaces, six social platforms, publishing history and Stripe subscription infrastructure. The existing text/video integrations are adapted from [PeakCut](https://github.com/haziqahmedqasmi/PeakCut).
 
-The connected-account and video-publishing patterns are adapted from [PeakCut](https://github.com/haziqahmedqasmi/PeakCut). This project adds asynchronous delivery, bounded uploads, durable request keys, explicit consent and independent results.
+## Run locally
 
-## Run
-
-~~~bash
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env
-uvicorn app.main:app --host 0.0.0.0 --port 4000
-~~~
+uvicorn app.main:app --host 127.0.0.1 --port 4000
+```
 
-On Windows activate with .venv\Scripts\activate. Install FFmpeg and ffprobe on PATH for video validation. The text endpoint requires only the Python dependencies.
+Requires Python 3.10+ and FFmpeg/ffprobe for video. Open [Dispatch](http://127.0.0.1:4000) and create an account. [API documentation](http://127.0.0.1:4000/docs) remains available.
 
-Open [the browser app](http://localhost:4000) or [Swagger documentation](http://localhost:4000/docs). For OAuth, open the exact APP_BASE_URL, defaulting to http://127.0.0.1:4000.
+SaaS mode is enabled by default. The first account registered directly from the local machine becomes an administrator when ADMIN_EMAIL is unset. Public signup never grants administrator privileges by matching an email address. Operators can promote an existing account through the deployment console:
 
-## Assessment API
+```bash
+python -m app.manage promote owner@example.com
+```
 
-~~~bash
-curl -X POST http://localhost:4000/posting \
-  -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: demo-message-request-001' \
-  -d '{"message":"Discover our latest platform. https://example.com"}'
-~~~
+The dashboard provides Overview, Create a post, Connected accounts, and Plan & billing. Create and switch between up to 10 owner-managed workspaces. Each workspace has its own credentials, OAuth connections, request keys, history, usage and subscription.
 
-The only request field is message. It accepts at most 200 Unicode code points and exactly one explicit HTTP or HTTPS link. Invalid or extra fields return 422 before external calls. The URL is validated syntactically, without fetching the CTA destination. Embedded credentials, local hostnames and private literal IP addresses are rejected.
+## Customer and administrator setup
 
-All three destinations are selected internally. Each result contains platform, status, posted_url, public_access, date, time and error. Top-level success is true if at least one platform succeeds. HTTP 200 can contain partial or total delivery failures. Dates and times are UTC.
+Customers configure Mastodon, Bluesky and Telegram credentials through Set up, Save settings and Test connection. Forms contain official credential-page links and numbered instructions. Secrets are never returned in API responses. Blank secret inputs preserve saved credentials.
 
-Publication and public verification are separate. A successfully published post may have public_access false while indexing, moderation or privacy prevents an anonymous read. The result retains its published URL and includes an explanation.
+Administrators configure the shared YouTube, Instagram and TikTok developer applications once through the setup forms. Customers use Connect to authorize their own social accounts. Changing a shared app invalidates its existing workspace connections so accounts can reconnect using the new app.
 
-Missing credentials produce real failed results. Production code does not simulate successful posts.
+Mastodon needs write:statuses and profile or read:accounts. Bluesky uses an app password and the account's PDS. Telegram needs a public @channel and a bot administrator with posting permission. Instagram needs a professional account, public HTTPS application/media origins, and appropriate app access. TikTok needs approved scopes and creator access. YouTube requires a channel, Google OAuth consent and appropriate test-user or production access.
 
-## Configure text platforms
+## Authentication and isolation
 
-- Mastodon requires MASTODON_BASE_URL and MASTODON_ACCESS_TOKEN with write:statuses plus profile or read:accounts for connection testing.
-- Bluesky requires BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD. BLUESKY_PDS_URL must match the account's PDS. The default supports accounts hosted on bsky.social.
-- Telegram requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL, a public @channel username. Add the bot as a channel administrator with posting permission.
+Passwords use salted scrypt hashes. Opaque seven-day sessions use hashed server-side identifiers and HttpOnly, SameSite=Lax cookies. HTTPS application addresses enable Secure cookies. Mutating authenticated requests require the session's X-CSRF-Token and reject foreign origins. Signup/login have persisted 15-minute rate limits.
 
-Open either browser tab and click **Set up** beside a platform. Enter the credentials, click **Save settings**, then **Test connection**. Video platforms also need **Connect** to authorize the account through the provider. No manual .env editing or restart is needed for these settings.
+GET /auth/me provides the signed-in user's CSRF token and workspace memberships. POST /auth/register and POST /auth/login accept email, password and optional name. Passwords require 12–128 characters. POST /auth/logout revokes the current session. Workspace switching validates server-side ownership. The application API key does not bypass SaaS authentication.
 
-Saved settings override environment defaults and persist in the ignored local SQLite database. Passwords and tokens are returned only as a saved flag. Leave a saved secret blank to retain it. Changing a video app's credentials clears its previous connection and outstanding sign-in states. The application address is shared by all video platforms, and each setup form shows the exact redirect URI.
+Credential settings and OAuth token payloads are encrypted with Fernet. Configure ENCRYPTION_KEY through your secret manager, or keep the automatically generated data/master.key. Back up both the database and its encryption key. File permissions are owner-only on supported systems. Email verification and password recovery use one-time, hashed, expiring tokens and TLS-protected SMTP. HTTPS deployments require email verification by default. Configure SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD and SMTP_FROM before allowing public signup. Local development leaves verification optional unless REQUIRE_EMAIL_VERIFICATION=true. Publishing, provider connection/tests and checkout require verified email when enabled. Password reset revokes the user's existing sessions. Email links keep their tokens in URL fragments so they are not sent in HTTP request URLs. No real email has been sent during testing.
 
-Connection tests authenticate or retrieve account/creator details without publishing content. Mastodon testing also needs profile or read:accounts permission. Telegram checks bot administrator posting permission. A successful test does not guarantee available publishing quota, app review, or all publishing scopes. An unconnected video account must complete Connect before testing.
+Signup does not assign old local credentials or publishing history to an arbitrary new user.
 
-Optional .env credentials remain available as startup defaults. Restart after editing those defaults. Once a setting is saved in the UI, its stored override takes precedence. APP_API_KEY, database location and resource limits remain server environment settings.
+On first SaaS migration, an owner-only pre-saas-*.sqlite3 backup is created before credential encryption. Existing local data stays in the legacy namespace. This backup contains the original credential material and needs the same protection as the original database.
 
-Connection endpoints are GET /settings/{platform}, PUT /settings/{platform} with a values object, and POST /settings/{platform}/test. All use the same optional X-API-Key protection as posting. Supported platform IDs are mastodon, bluesky, telegram, youtube, instagram and tiktok.
+## Text API
 
-## Video extension
+POST /posting accepts exactly one field:
 
-The Video post tab connects accounts through OAuth and accepts an MP4, title, caption, visibility, audience and consent. All three destinations are handled independently. Unconnected accounts return failed results while others continue.
+```json
+{"message":"Discover our latest tools. https://example.com"}
+```
 
-~~~bash
-curl -X POST http://localhost:4000/video-posting \
-  -H 'Idempotency-Key: demo-video-request-001' \
-  -F 'file=@short.mp4;type=video/mp4' \
-  -F 'title=My short video' \
-  -F 'caption=A short description' \
-  -F 'youtube_privacy=private' \
-  -F 'tiktok_privacy=SELF_ONLY' \
-  -F 'consent=true' \
-  -F 'made_for_kids=false'
-~~~
+Messages allow up to 200 Unicode code points and exactly one public HTTP/HTTPS CTA link. Invalid input returns 422 before provider calls. CTA validation does not fetch the target. Platforms are selected internally. Mastodon, Bluesky and Telegram deliver independently.
 
-Video input must be H.264 MP4, at most 180 seconds and 4K, within MAX_VIDEO_MB (default 250 MB). Captions allow 2,200 characters. The assessment's 200-character and one-link rules apply to the separate text endpoint.
+In SaaS mode, requests need a session cookie and X-CSRF-Token. An optional Idempotency-Key prevents duplicate publication and is scoped to the active workspace. The server generates a request key when omitted. Completed responses replay without using additional allowance. Different content or an interrupted request using the same key returns 409.
 
-YouTube defaults to private. TikTok visibility is explicitly selected from current creator options. Instagram follows its professional-account publishing behavior.
+Each platform result includes platform, status, posted_url, public_access, date, time and error. Dates and times are UTC. Success means at least one platform confirmed publication. Anonymous public-access verification is separate from successful publishing.
 
-A pending video result means processing is unconfirmed after the bounded polling period. Check the account before retrying. Uploaded files have one-hour public-link validity and are cleaned up by a subsequent upload after expiration.
+For the original standalone assessment contract, use SAAS_ENABLED=false with a separate legacy database. APP_API_KEY then optionally protects endpoints. Do not turn off SaaS authentication on the public deployment.
 
-## Reliability and access
+## Video API
 
-The browser supplies an Idempotency-Key. Completed requests replay their saved response without posting again. A changed payload with the same key returns 409. Concurrent or interrupted requests also return 409 so the operator can check platform accounts before making a new attempt.
+POST /video-posting accepts multipart file, title, caption, youtube_privacy, tiktok_privacy, consent, made_for_kids and interaction flags. Files must be H.264 MP4, at most 180 seconds and 4K, within MAX_VIDEO_MB (250 MB by default). Consent is required. The separate text endpoint's CTA rules do not apply to video captions.
 
-No automatic publish retries are performed. A timeout may happen after a platform accepted the post. Using a new key can create a duplicate.
+YouTube uses resumable upload, Instagram uses a publicly fetchable random media URL, and TikTok uses creator settings and bounded chunks. Private/unverified posts may have no public link. Pending processing stays pending in history. Media links expire after one hour and expired files are cleaned by subsequent uploads. No automatic publication retries are performed.
 
-Set APP_API_KEY to require X-API-Key on posting, credential setup, testing and video-account controls. The browser holds the key in page memory. Use HTTPS and an access key when exposing the service. SQLite tokens have owner-only file permissions but are not encrypted at rest. Protect the host and backups.
+## Plans and Stripe billing
 
-The application is designed for a single server operator. Local SQLite and media storage are not a distributed deployment.
+Free defaults to 50 publishing requests per workspace per UTC calendar month. Pro defaults to 1,000. Configure FREE_MONTHLY_POSTS and PRO_MONTHLY_POSTS to change allowances. One request can deliver to three platforms. Failed, pending and interrupted requests count because delivery may already have occurred. Quota reservation and request-key creation share one database transaction. Limit exhaustion returns 402 before another provider delivery.
 
-## Tests
+Billing remains inactive until all of these are configured:
 
-~~~bash
+- STRIPE_SECRET_KEY
+- STRIPE_WEBHOOK_SECRET
+- STRIPE_PRO_PRICE_ID, a recurring subscription price
+
+POST /billing/checkout uses the configured server-side price and active workspace's customer. Open checkout sessions are reused. POST /billing/portal opens that workspace's customer portal. Configure the portal in Stripe before use. Pricing is shown in Checkout; the UI does not invent a price.
+
+Register POST /billing/webhook with Stripe and subscribe to customer.subscription.created, customer.subscription.updated and customer.subscription.deleted. Webhooks verify the raw-body HMAC signature with a five-minute tolerance. Duplicate event IDs are ignored. Current subscription state is fetched from Stripe so delayed notifications do not blindly restore old state. Only active/trialing subscriptions with the configured Pro price receive Pro allowance. Other statuses use Free allowance. Subscription changes apply after webhook confirmation, never from a checkout return URL.
+
+Use Stripe test-mode keys and webhook forwarding first. No live charge or live provider post has been performed in development.
+
+## Deployment
+
+A Dockerfile and compose.yaml run the app as a non-root user with FFmpeg and persistent data. Copy .env.example to .env, configure your deployment values, then run:
+
+```bash
+docker compose up -d --build
+```
+
+Compose binds to 127.0.0.1:4000 for a local HTTPS reverse proxy. Set APP_BASE_URL to your public HTTPS origin and register its exact OAuth callbacks. PUBLIC_MEDIA_BASE_URL must expose this app's /media route to Instagram. Keep the data volume and encryption key across deployments. Promote the administrator with docker compose exec dispatch python -m app.manage promote owner@example.com.
+
+This release is a single-node MVP. Publishing runs within the HTTP request, and a lost request can remain interrupted. Before a broad public launch, configure transactional SMTP, automated backups, monitoring, abuse controls and deployment-level network egress restrictions. Customer-configurable social API hosts are already restricted by SOCIAL_ALLOWED_HOSTS, which defaults to mastodon.social and bsky.social. Add trusted Mastodon instances or Bluesky PDS hosts through operator configuration. A multi-replica version needs PostgreSQL, shared object storage and a durable worker queue. Billing and social developer-app approvals must be completed for your own accounts. See [deployment notes](intructon.md).
+
+## Verification and design
+
+```bash
 python -m unittest discover -s tests -v
-~~~
+```
 
-Tests use HTTPX MockTransport. They cover message validation, partial delivery, Unicode link facets, authentication, rate limits, timeouts, sanitized errors, idempotency, OAuth state replay, token refresh, real MP4 inspection, upload protocols and media expiration. FFmpeg creates a tiny local fixture.
+All 56 tests passed locally and inside the Linux Docker image. A separate container smoke test verified real HTTP flows, non-root execution and encrypted data/session persistence across restart.
 
-Live posting requires real credentials, developer apps, approved scopes and account authorization. The user requested mocked integration tests first, so no live posts were made.
+Tests use HTTPX MockTransport and local FFmpeg fixtures. They cover existing provider protocols plus SaaS authentication, workspace isolation, encrypted persistence, CSRF, membership checks, usage limits, idempotency, OAuth state ownership and signed Stripe events. Browser QA uses an isolated database and does not create users in the operator's real database.
 
-## Official API research
+[artchitectrue.md](artchitectrue.md) describes boundaries and data flow. [intructon.md](intructon.md) records implementation, operator setup, verification and launch work.
 
-- [Mastodon account verification](https://docs.joinmastodon.org/methods/accounts/#verify-account-credentials)
-- [Telegram channel membership](https://core.telegram.org/bots/api#getchatmember)
-- [Mastodon statuses](https://docs.joinmastodon.org/methods/statuses/)
-- [Bluesky posts and link facets](https://docs.bsky.app/docs/advanced-guides/posts)
-- [Telegram sendMessage](https://core.telegram.org/bots/api#sendmessage)
-- [YouTube resumable uploads](https://developers.google.com/youtube/data/guides/using_resumable_upload_protocol)
-- [Google web OAuth](https://developers.google.com/identity/protocols/oauth2/web-server)
-- [Instagram publishing](https://developers.facebook.com/documentation/instagram-platform/content-publishing)
-- [Instagram business login](https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login/business-login)
-- [TikTok Direct Post](https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post)
-- [TikTok creator information](https://developers.tiktok.com/docs/en/content-posting-api-reference-query-creator-info)
-- [FastAPI request bodies](https://fastapi.tiangolo.com/tutorial/body/)
-- [Pydantic HTTP URL types](https://docs.pydantic.dev/latest/api/networks/)
+Official references include [Stripe Checkout](https://docs.stripe.com/api/checkout/sessions/create), [Stripe customer portal](https://docs.stripe.com/api/customer_portal/sessions/create), [Stripe subscription webhooks](https://docs.stripe.com/billing/subscriptions/webhooks), [Fernet](https://cryptography.io/en/stable/fernet/), [Mastodon](https://docs.joinmastodon.org/methods/statuses/), [Bluesky](https://docs.bsky.app/docs/advanced-guides/posts), [Telegram](https://core.telegram.org/bots/api), [Google OAuth](https://developers.google.com/identity/protocols/oauth2/web-server), [Instagram](https://developers.facebook.com/documentation/instagram-platform/content-publishing) and [TikTok](https://developers.tiktok.com/doc/content-posting-api-get-started/).
 
-These networks have publication APIs suitable for the assignment. LLM completion APIs return generated text rather than publishing public posts.
+To repeat the integration suite inside the container:
 
-## Design and continuation
-
-[artchitectrue.md](artchitectrue.md) describes components and decisions. [intructon.md](intructon.md) records setup, completed work, verification and the next account steps. Filenames follow the requested deliverables.
-
-All six setup forms include links to official credential pages and numbered setup steps. Mastodon’s Development link follows the server URL entered in the form. Links open in a new tab so setup details stay available.
+```bash
+docker build -t dispatch-saas:local .
+docker run --rm -v "$PWD/tests:/app/tests:ro" dispatch-saas:local python -m unittest discover -s tests -v
+```

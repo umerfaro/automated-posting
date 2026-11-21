@@ -1,81 +1,96 @@
-# Architecture
+# Dispatch SaaS architecture
 
-## Boundaries
+Updated November 21, 2026.
 
-Dispatch is an independent FastAPI project. PeakCut supplies the pattern of connected accounts, platform-specific publishing and normalized delivery outcomes. Text adapters implement APIs appropriate to messages with CTA links. Video adapters adapt PeakCut's OAuth, refresh, upload and processing sequence.
+## Product boundary
 
-POST /posting is the assessment entry point. POST /video-posting is an extension. The browser calls these same APIs.
+Dispatch is now a single-node SaaS MVP built on FastAPI. User accounts own workspaces. Workspaces own publishing credentials, authorized social accounts, usage, request keys, subscription state and publication history. A shared social developer application belongs to the service operator. Customers authorize their own accounts using that shared application.
 
-## Data flow
+The existing assessment endpoint and video adapters remain intact. Tests can explicitly construct legacy Settings, while normal environment startup enables SaaS mode. No cloud deployment or live charge is implied by this conversion.
 
-~~~mermaid
+## Runtime flow
+
+```mermaid
 flowchart TD
-    Client[Browser or REST client] --> API[FastAPI validation and optional API key]
-    API --> Store[SQLite request-key claim]
-    Store --> Text[Text posting service]
-    Store --> Video[Video posting service]
-    Text --> Mastodon[Mastodon]
-    Text --> Bluesky[Bluesky PDS]
-    Text --> Telegram[Telegram channel]
-    Video --> OAuth[Connected account and token refresh]
-    OAuth --> YouTube[YouTube resumable upload]
-    OAuth --> Instagram[Instagram container and publish]
-    OAuth --> TikTok[TikTok creator info and file upload]
-    Mastodon --> Result[Independent platform results]
-    Bluesky --> Result
-    Telegram --> Result
-    YouTube --> Result
-    Instagram --> Result
-    TikTok --> Result
-    Result --> Store
-    Result --> Client
-~~~
+    Browser[Customer browser] --> Session[Opaque session authentication]
+    Session --> Tenant[Request-local user and workspace]
+    Tenant --> Config[Immutable credential snapshot]
+    Tenant --> Dashboard[Usage and publishing history]
+    Tenant --> Guard[CSRF and ownership checks]
+    Guard --> Claim[Atomic request-key claim and quota reservation]
+    Claim --> Publish[Independent provider adapters]
+    Config --> Publish
+    Publish --> Result[Per-platform results]
+    Result --> History[Workspace publication ledger]
+    Guard --> Connect[Workspace OAuth state and token storage]
+    Connect --> Provider[Shared developer apps]
+    Guard --> Checkout[Stripe Checkout and customer portal]
+    Stripe[Signed Stripe subscription events] --> Verify[Signature validation and current-state lookup]
+    Verify --> Entitlement[Workspace plan entitlement]
+    Entitlement --> Claim
+```
 
-## Modules
+## Components
 
-- app/main.py owns app lifespan, the shared asynchronous HTTP client, text routes and optional authorization.
-- app/config.py reads environment defaults without exposing credentials through API responses.
-- app/settings_routes.py validates persisted overrides, defines setup metadata and runs account-access checks without publishing.
-- app/schemas.py validates input and defines text and video result contracts.
-- app/platforms/base.py defines the adapter contract and sanitized errors.
-- app/platforms/mastodon.py creates public statuses and reads them anonymously.
-- app/platforms/bluesky.py creates a session and post record with UTF-8 byte-offset link facets.
-- app/platforms/telegram.py sends public-channel messages and checks their anonymous embeds.
-- app/services/posting_service.py gathers independent text adapter results.
-- app/services/store.py stores request fingerprints, responses, OAuth accounts, credential overrides and expiring states in SQLite.
-- app/services/video_accounts.py manages sign-in and refresh for the three video platforms.
-- app/services/video_posting.py handles resumable uploads, Instagram containers and TikTok chunks.
-- app/video_routes.py validates actual files and consent, and serves expiring media links.
-- app/web/index.html contains the responsive browser interface without a frontend build step.
+- app/main.py wires lifespan, shared HTTP client, session/tenant middleware, APIs and static assets.
+- app/tenancy.py holds ContextVar identity and workspace selection, set and reset for every request.
+- app/saas.py owns authentication, ownership-checked workspaces, usage/history, operator bootstrap, migration encryption and Stripe integration.
+- app/manage.py provides console-only administrator promotion.
+- app/config.py defines environment defaults and SaaS/billing configuration.
+- app/settings_routes.py merges global developer apps with workspace credentials, pins immutable snapshots, validates updates and checks account access without publishing.
+- app/services/store.py scopes credentials, accounts, request keys and OAuth states to the request workspace. Settings and OAuth account payloads are encrypted.
+- app/services/posting_service.py runs the three text adapters independently.
+- app/services/video_accounts.py implements provider authorization and token refresh.
+- app/services/video_posting.py implements upload protocols and processing checks.
+- app/video_routes.py handles bounded real-file validation, consent and expiring media links.
+- app/web/index.html retains the text/video composers and six setup forms.
+- app/web/assets/saas.js provides account onboarding, sidebar navigation, workspace switching, overview/history and billing.
+- app/web/assets/saas.css supplies the responsive SaaS visual shell.
 
-## Reliability
+## Data model
 
-Platforms execute as independent coroutines. Network and provider errors become individual failed results. Publish operations are not retried automatically because a platform may already have accepted a timed-out request.
+Users store a normalized unique email, display name, password salt/hash and administrator flag. Sessions store only hashes of opaque cookie values, a user ID, active workspace, CSRF token and expiration. Workspaces have an owner, plan, subscription status and unique Stripe customer ID.
 
-SQLite claims keys in an immediate transaction. Completed keys replay the stored result. Payload changes, concurrent claims and interrupted requests return 409. The ledger prevents duplicate requests within this application but cannot guarantee exactly-once transactions across external APIs.
+Credentials/settings, connected account payloads and request keys use workspace-prefixed keys in the existing tables. Legacy records retain their unscoped keys. OAuth states are selected by both random state and scoped platform. A customer cannot consume another workspace's sign-in state. Workspace IDs come from authenticated sessions and ownership checks, rather than user-provided publishing payloads.
 
-Message fingerprints hash the exact message. Video fingerprints include file bytes, title, caption, privacy and interaction settings. The request ledger does not retain raw message bodies or original filenames.
+Publications record an immutable request key, kind, title, UTC creation time, status and normalized delivery response. Processing/interrupted rows remain visible. Pending provider processing is preserved as pending. Partial delivery is distinct from complete failure.
 
-Text results use provider timestamps where returned. Bluesky uses the accepted record's createdAt. Video results use UTC confirmation time where providers return no publication timestamp. Pending processing is explicitly distinct from confirmed success.
+Billing-checkout rows retain the active remote session to avoid creating repeated open checkouts. Billing-event IDs provide replay protection. Auth-attempt rows enforce a persisted short-window rate limit.
 
-## Public access
+## Security and migration
 
-A text result's public_access is true only after an unauthenticated read confirms the object. Publication success can coexist with unverified public access. Instagram and TikTok video access remains conservatively unverified. Private TikTok publication may return no public link.
+Passwords use independent random salts with scrypt. Session tokens are random and stored only as SHA-256 hashes. Cookie lifetime is seven days, with HttpOnly and SameSite=Lax. HTTPS APP_BASE_URL enables Secure. Mutations require the session-bound CSRF header. Origin checks reject foreign-origin browser requests. Trusted-host middleware rejects hostnames outside the operator-configured allowlist.
 
-CTA URLs are validated without fetching destinations. API calls go to server-configured origins or known provider endpoints. Upload locations returned by providers require expected HTTPS hosts.
+Matching ADMIN_EMAIL never grants privileges through public signup. The first direct loopback registration can bootstrap a local operator when ADMIN_EMAIL is unset. Public operators promote their registered account through a trusted deployment console.
 
-## OAuth and storage
+Fernet protects credential and account payloads at rest. A configured ENCRYPTION_KEY takes precedence. Local setups generate an owner-only master.key. Backups require this key. First migration creates a pre-SaaS database backup before encryption. Old local data stays unassigned, preventing public signups from inheriting the prior operator's accounts.
 
-Client secrets can be entered through the browser setup forms or supplied as environment defaults. Browser overrides are stored in a separate SQLite settings table. Each HTTP request pins an immutable merged settings snapshot so concurrent setup changes cannot mix credentials during an in-flight operation. Subsequent requests immediately use saved values. The settings API returns non-secret values and saved flags, with no secret readback. Blank secret fields preserve existing values. Video credential changes invalidate the selected platform account and pending OAuth states. Access and refresh tokens are stored in an ignored SQLite database with owner-only file permissions on supporting systems. Storage is not encrypted at rest.
+Shared app credentials are writable only by administrators. Customer setup responses omit shared credential fields. Rotating an app invalidates that provider's saved OAuth connections and outstanding states across workspaces. Text credentials always remain workspace-specific. Customer-configured Mastodon and Bluesky origins must match SOCIAL_ALLOWED_HOSTS. Operators approve additional hosts through the environment. This prevents arbitrary customer-selected internal destinations. Deployment egress controls remain necessary as defense in depth.
 
-OAuth states expire after ten minutes, are single-use and are bound to a browser HttpOnly SameSite cookie. TikTok also uses PKCE. Token refresh is serialized within a process. This is a single-operator app; multi-user isolation and distributed refresh locking would require a separate design.
+Public media links are unguessable bearer capabilities with one-hour validity. Uploaded media must be reachable by Instagram without the browser session. The host filesystem and media capabilities are separate from customer API access.
 
-YouTube streams uploaded bytes to a resumable session. Instagram receives an expiring, random media URL on a configured public HTTPS origin. TikTok receives bounded upload chunks after creator settings are checked.
+## Email identity lifecycle
 
-Uploads use random 256-bit filenames. Media links expire after an hour, support file ranges and are cleaned by subsequent uploads. A distributed deployment would require shared object storage, a queue and stronger operational controls.
+SMTP delivery uses TLS (STARTTLS on port 587 or implicit TLS on 465). Verification tokens expire after 24 hours and password-reset tokens after one hour. Only token hashes are stored. Token consumption and the corresponding account mutation share one transaction. Resetting a password revokes all sessions for that user. Recovery responses do not distinguish unknown accounts from known accounts.
+
+Verification is required by default for HTTPS environment deployments. Required verification fails closed when email delivery has not been configured. Account setup can be prepared while awaiting verification, but publication, provider authorization/testing and checkout are blocked. Local development can use the product without SMTP unless verification is explicitly required. Fragment-based email links avoid placing secret tokens in server request URLs. The frontend exchanges the token through a JSON POST.
+
+## Subscription and usage semantics
+
+Free and Pro limits are operator-configurable per workspace per UTC calendar month. Every new publishing attempt reserves one unit inside the same SQLite transaction as request-key insertion. Failed and interrupted attempts retain the unit. Replaying a completed request with the same key consumes no additional unit. Limits apply equally to text and video.
+
+Checkout accepts no browser-supplied price or entitlement. The operator supplies one recurring Pro price. The workspace's Stripe customer is selected server-side. A completed checkout redirect grants no entitlement. Signed subscription events cause the server to fetch current subscription state and update the matching customer workspace. Only active/trialing state containing the configured price grants Pro. Customer-portal actions eventually reconcile through the same event path.
+
+Events are deduplicated and signature timestamps have a five-minute tolerance. Live payments remain inactive until credentials, price, portal and webhook delivery are configured. Pricing and currencies are owned by the Stripe price rather than hardcoded UI claims.
+
+## Deployment boundary and next scale
+
+The delivered deployment is one FastAPI node, SQLite, a private data volume and an HTTPS reverse proxy. Docker runs as a non-root user and includes FFmpeg. Media files and the database live on the persistent volume. Publishing is synchronous within the request, with bounded provider polling and conservative interrupted states.
+
+For multiple replicas, replace SQLite with PostgreSQL and explicit tenant columns/row-level policies, place media in object storage and dispatch publication via a durable queue with worker leases. Separate webhook reconciliation jobs from HTTP delivery when scaling. Use a managed secret store and coordinated token-refresh locking.
+
+Before broad public launch, configure and verify SMTP delivery, then add operator audit trails, external monitoring/backups, application abuse controls and network egress restrictions. Team invitations, role delegation, multiple accounts per provider and scheduled publication are future product work. Current workspaces are owner-managed, with one account per platform. These capabilities are not represented as completed features.
 
 ## Verification boundary
 
-The implementation includes real HTTP integrations and mocked provider tests. Live credentials, developer app approvals and real account authorization are external prerequisites. Tests never fabricate successful production results.
-
-TikTok app audit rules and Instagram professional-account requirements still apply. The browser requires consent and visibility choices. Production platform compliance review and public hosting are outside the assessment.
+Provider and Stripe integration tests use real protocol shapes with mocked HTTP responses. Tests prove isolation, request safety and entitlement behavior. They do not prove production account approval, delivery quotas or live payment settlement. Browser journeys run on an isolated test database. No live external posts or charges were made.
