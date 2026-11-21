@@ -48,7 +48,7 @@ class VideoAccounts:
     def start(self, platform):
         client_id, _ = self.keys(platform)
         if not all(self.keys(platform)):
-            raise PlatformError(f"Set the {NAMES[platform]} developer app credentials in .env first.")
+            raise PlatformError(f"Set the {NAMES[platform]} developer app credentials using Set up first.")
         if platform in ("instagram", "tiktok") and not self.settings.app_base_url.startswith("https://"):
             raise PlatformError("This platform needs an HTTPS APP_BASE_URL registered with its developer app.")
         state, verifier = secrets.token_urlsafe(32), secrets.token_urlsafe(48)

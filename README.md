@@ -37,11 +37,19 @@ Missing credentials produce real failed results. Production code does not simula
 
 ## Configure text platforms
 
-- Mastodon requires MASTODON_BASE_URL and MASTODON_ACCESS_TOKEN with write:statuses.
+- Mastodon requires MASTODON_BASE_URL and MASTODON_ACCESS_TOKEN with write:statuses plus profile or read:accounts for connection testing.
 - Bluesky requires BLUESKY_IDENTIFIER and BLUESKY_APP_PASSWORD. BLUESKY_PDS_URL must match the account's PDS. The default supports accounts hosted on bsky.social.
 - Telegram requires TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL, a public @channel username. Add the bot as a channel administrator with posting permission.
 
-Restart after editing .env. Configuration presence is distinct from successful authentication.
+Open either browser tab and click **Set up** beside a platform. Enter the credentials, click **Save settings**, then **Test connection**. Video platforms also need **Connect** to authorize the account through the provider. No manual .env editing or restart is needed for these settings.
+
+Saved settings override environment defaults and persist in the ignored local SQLite database. Passwords and tokens are returned only as a saved flag. Leave a saved secret blank to retain it. Changing a video app's credentials clears its previous connection and outstanding sign-in states. The application address is shared by all video platforms, and each setup form shows the exact redirect URI.
+
+Connection tests authenticate or retrieve account/creator details without publishing content. Mastodon testing also needs profile or read:accounts permission. Telegram checks bot administrator posting permission. A successful test does not guarantee available publishing quota, app review, or all publishing scopes. An unconnected video account must complete Connect before testing.
+
+Optional .env credentials remain available as startup defaults. Restart after editing those defaults. Once a setting is saved in the UI, its stored override takes precedence. APP_API_KEY, database location and resource limits remain server environment settings.
+
+Connection endpoints are GET /settings/{platform}, PUT /settings/{platform} with a values object, and POST /settings/{platform}/test. All use the same optional X-API-Key protection as posting. Supported platform IDs are mastodon, bluesky, telegram, youtube, instagram and tiktok.
 
 ## Video extension
 
@@ -71,7 +79,7 @@ The browser supplies an Idempotency-Key. Completed requests replay their saved r
 
 No automatic publish retries are performed. A timeout may happen after a platform accepted the post. Using a new key can create a duplicate.
 
-Set APP_API_KEY to require X-API-Key on posting and video-account controls. The browser holds the key in page memory. Use HTTPS and an access key when exposing the service. SQLite tokens have owner-only file permissions but are not encrypted at rest. Protect the host and backups.
+Set APP_API_KEY to require X-API-Key on posting, credential setup, testing and video-account controls. The browser holds the key in page memory. Use HTTPS and an access key when exposing the service. SQLite tokens have owner-only file permissions but are not encrypted at rest. Protect the host and backups.
 
 The application is designed for a single server operator. Local SQLite and media storage are not a distributed deployment.
 
@@ -87,6 +95,8 @@ Live posting requires real credentials, developer apps, approved scopes and acco
 
 ## Official API research
 
+- [Mastodon account verification](https://docs.joinmastodon.org/methods/accounts/#verify-account-credentials)
+- [Telegram channel membership](https://core.telegram.org/bots/api#getchatmember)
 - [Mastodon statuses](https://docs.joinmastodon.org/methods/statuses/)
 - [Bluesky posts and link facets](https://docs.bsky.app/docs/advanced-guides/posts)
 - [Telegram sendMessage](https://core.telegram.org/bots/api#sendmessage)

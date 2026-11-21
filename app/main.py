@@ -11,6 +11,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.config import Settings
+from app.settings_routes import RuntimeSettings, router as settings_router
 from app.schemas import PostingRequest, PostingResponse
 from app.services.posting_service import PostingService
 from app.services.store import Store
@@ -20,7 +21,7 @@ from app.video_routes import router as video_router
 
 
 def create_app(settings=None, transport=None):
-    settings = settings or Settings.from_env()
+    settings = RuntimeSettings(settings or Settings.from_env())
 
     @asynccontextmanager
     async def lifespan(app):
@@ -28,8 +29,10 @@ def create_app(settings=None, transport=None):
             timeout=httpx.Timeout(settings.timeout), follow_redirects=False,
             transport=transport, headers={"User-Agent": "AutomatedPosting/1.0"},
         ) as client:
-            app.state.service = PostingService(settings, client)
             app.state.store = Store(settings.database_path)
+            settings.store = app.state.store
+            app.state.client = client
+            app.state.service = PostingService(settings, client)
             app.state.video_accounts = VideoAccounts(settings, app.state.store, client)
             app.state.video_posting = VideoPosting(app.state.video_accounts, settings, client)
             yield
@@ -38,6 +41,14 @@ def create_app(settings=None, transport=None):
         title="Automated Multi-Platform Posting", version="1.0.0", lifespan=lifespan,
         description="Publish a validated message to Mastodon, Bluesky and Telegram independently. Dates and times are UTC.",
     )
+
+    @app.middleware("http")
+    async def settings_snapshot(request, call_next):
+        token = settings.context.set(settings.snapshot())
+        try:
+            return await call_next(request)
+        finally:
+            settings.context.reset(token)
 
     async def authorize(x_api_key: Annotated[str | None, Header()] = None):
         if settings.api_key and not secrets.compare_digest(x_api_key or "", settings.api_key):
@@ -82,6 +93,7 @@ def create_app(settings=None, transport=None):
             app.state.store.finish(idempotency_key, response)
         return response
 
+    app.include_router(settings_router(settings, authorize))
     app.include_router(video_router(settings, authorize))
     return app
 

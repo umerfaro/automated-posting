@@ -27,13 +27,13 @@ For a fresh checkout follow README.md to create the virtual environment and inst
 
 Open http://localhost:4000 and http://localhost:4000/docs. For OAuth, open the exact configured APP_BASE_URL, defaulting to http://127.0.0.1:4000.
 
-Copy .env.example to .env. Enter credentials locally and restart the server. Environment variables take precedence over .env.
+Open Set up beside a platform in the browser. Save credentials and run Test connection. No restart is needed. Video accounts also require Connect after saving. Secrets remain on the server and saved values survive restarts. Optional environment variables take precedence over .env, while saved UI settings override both. APP_API_KEY and resource limits remain environment settings.
 
 ## Text platform setup
 
-1. Create a Mastodon user token with write:statuses scope. Set MASTODON_BASE_URL and MASTODON_ACCESS_TOKEN.
-2. Create a Bluesky app password. Set BLUESKY_IDENTIFIER, BLUESKY_APP_PASSWORD and the account's PDS origin.
-3. Create a Telegram bot through BotFather. Give it posting permission as an administrator of a public channel. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL.
+1. Create a Mastodon user token with write:statuses and profile or read:accounts scopes. Enter its server URL and access token in Mastodon → Set up, save and test.
+2. Create a Bluesky app password. Enter your handle, app password and PDS origin in Bluesky → Set up, save and test.
+3. Create a Telegram bot through BotFather. Give it posting permission as an administrator of a public channel. Enter the bot token and public @channel in Telegram → Set up, save and test.
 4. Submit a short message with one HTTP or HTTPS CTA link and inspect each delivery result.
 
 Use destinations that permit the submitted content. The app publishes the supplied message as written.
@@ -44,8 +44,8 @@ Use destinations that permit the submitted content. The app publishes the suppli
 2. Configure OAuth consent and add your Google account as a test user when the app is in testing.
 3. Create an OAuth client of type Web application.
 4. Register http://127.0.0.1:4000/oauth/youtube/callback for the default local APP_BASE_URL.
-5. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.
-6. Restart and connect YouTube from the Video post tab at APP_BASE_URL.
+5. Enter Client ID and Client secret in YouTube → Set up and click Save settings.
+6. Connect YouTube from the Video post tab at APP_BASE_URL.
 7. Choose the channel and grant the requested scopes. Review audience and visibility before posting.
 
 Channel and API limits are returned as platform errors. There is no custom 24-hour pause.
@@ -54,11 +54,11 @@ Channel and API limits are returned as platform errors. There is no custom 24-ho
 
 1. Configure a Meta app with Instagram API and Instagram Login.
 2. Use a Creator or Business Instagram account.
-3. Configure APP_BASE_URL to the HTTPS origin serving this application.
+3. Enter the HTTPS origin serving this application as Application address in Set up. This address is shared by all video connections.
 4. Register APP_BASE_URL/oauth/instagram/callback in Instagram business login settings.
-5. Set INSTAGRAM_APP_ID and INSTAGRAM_APP_SECRET.
-6. Set PUBLIC_MEDIA_BASE_URL to a publicly reachable HTTPS origin serving this app's /media route.
-7. Restart and connect Instagram from the Video post tab.
+5. Enter App ID and App secret in Instagram → Set up.
+6. Enter a publicly reachable HTTPS media address serving this app's /media route in the Instagram setup form and save.
+7. Connect Instagram from the Video post tab.
 8. Ensure your account has tester or approved access as required by the Meta app.
 
 Instagram must fetch media directly without an application login screen in front of the /media route. Links are random and expire after one hour. Set APP_API_KEY to protect posting controls when exposing the application.
@@ -68,8 +68,8 @@ Instagram must fetch media directly without an application login screen in front
 1. Register a TikTok developer app with Login Kit and Content Posting API.
 2. Register APP_BASE_URL/oauth/tiktok/callback with an HTTPS APP_BASE_URL.
 3. Enable user.info.basic and video.publish scopes.
-4. Set TIKTOK_CLIENT_KEY and TIKTOK_CLIENT_SECRET.
-5. Restart and connect TikTok.
+4. Enter Client key and Client secret in TikTok → Set up and save.
+5. Connect TikTok.
 6. Refresh connections to load current creator privacy and interaction options.
 7. Explicitly choose available visibility, preview the video and confirm publishing.
 
@@ -109,3 +109,14 @@ Idempotency keys are durable. A completed request replays its saved result; an i
 - The app runs separately on port 4000. PeakCut remains in its original project folder.
 
 Live external publishing remains untested pending credentials and approved account connections, as agreed.
+
+## Browser credential setup update
+
+- Added Set up and Test connection controls for all six destinations.
+- Added authenticated settings metadata and update endpoints, URL validation, secret redaction and persistent overrides.
+- Added read-only profile/permission checks. Video checks use authorized accounts and may refresh access tokens. Bluesky checks create an authentication session.
+- Changing a video developer app clears its old account connection. Connect again after saving.
+- All 27 automated tests passed, including persistence across app restarts, access-key enforcement, secret preservation, and non-publishing checks across all six providers.
+- Live checks still require your own credentials and provider authorization.
+
+- Browser credential forms verified at desktop and 390-pixel mobile widths, including redirect display, Save payloads, secret clearing and failure feedback. Browser Save checks intercepted the request, so no fake credentials were persisted on the running server.

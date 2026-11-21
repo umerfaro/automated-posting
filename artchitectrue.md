@@ -34,14 +34,15 @@ flowchart TD
 ## Modules
 
 - app/main.py owns app lifespan, the shared asynchronous HTTP client, text routes and optional authorization.
-- app/config.py reads environment settings without exposing credentials through API responses.
+- app/config.py reads environment defaults without exposing credentials through API responses.
+- app/settings_routes.py validates persisted overrides, defines setup metadata and runs account-access checks without publishing.
 - app/schemas.py validates input and defines text and video result contracts.
 - app/platforms/base.py defines the adapter contract and sanitized errors.
 - app/platforms/mastodon.py creates public statuses and reads them anonymously.
 - app/platforms/bluesky.py creates a session and post record with UTF-8 byte-offset link facets.
 - app/platforms/telegram.py sends public-channel messages and checks their anonymous embeds.
 - app/services/posting_service.py gathers independent text adapter results.
-- app/services/store.py stores request fingerprints, responses, OAuth accounts and expiring states in SQLite.
+- app/services/store.py stores request fingerprints, responses, OAuth accounts, credential overrides and expiring states in SQLite.
 - app/services/video_accounts.py manages sign-in and refresh for the three video platforms.
 - app/services/video_posting.py handles resumable uploads, Instagram containers and TikTok chunks.
 - app/video_routes.py validates actual files and consent, and serves expiring media links.
@@ -65,7 +66,7 @@ CTA URLs are validated without fetching destinations. API calls go to server-con
 
 ## OAuth and storage
 
-Client secrets are supplied in environment variables. Access and refresh tokens are stored in an ignored SQLite database with owner-only file permissions on supporting systems. Storage is not encrypted at rest.
+Client secrets can be entered through the browser setup forms or supplied as environment defaults. Browser overrides are stored in a separate SQLite settings table. Each HTTP request pins an immutable merged settings snapshot so concurrent setup changes cannot mix credentials during an in-flight operation. Subsequent requests immediately use saved values. The settings API returns non-secret values and saved flags, with no secret readback. Blank secret fields preserve existing values. Video credential changes invalidate the selected platform account and pending OAuth states. Access and refresh tokens are stored in an ignored SQLite database with owner-only file permissions on supporting systems. Storage is not encrypted at rest.
 
 OAuth states expire after ten minutes, are single-use and are bound to a browser HttpOnly SameSite cookie. TikTok also uses PKCE. Token refresh is serialized within a process. This is a single-operator app; multi-user isolation and distributed refresh locking would require a separate design.
 

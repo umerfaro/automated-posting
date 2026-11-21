@@ -1,4 +1,4 @@
-"""Server-owned platform selection and environment-only credentials."""
+"""Server-owned platform selection and environment defaults."""
 import os
 from dataclasses import dataclass, field
 from pathlib import Path

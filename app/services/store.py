@@ -14,6 +14,7 @@ class Store:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         with self.connect() as connection:
+            connection.execute("CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS accounts (platform TEXT PRIMARY KEY, payload TEXT NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS oauth_states (state TEXT PRIMARY KEY, platform TEXT, expires REAL, verifier TEXT)")
             connection.execute("""CREATE TABLE IF NOT EXISTS requests (
@@ -77,3 +78,17 @@ class Store:
         if not row:
             raise ValueError("Sign-in expired or already used. Connect again.")
         return row[0]
+
+    def settings(self):
+        import json
+        with self.connect() as connection:
+            return {name: json.loads(value) for name, value in connection.execute("SELECT name,value FROM settings")}
+
+    def save_settings(self, values, platform=None):
+        import json
+        with self.connect() as connection:
+            connection.executemany("INSERT OR REPLACE INTO settings VALUES (?,?)",
+                                   [(key, json.dumps(value)) for key, value in values.items()])
+            if platform:
+                connection.execute("DELETE FROM accounts WHERE platform=?", (platform,))
+                connection.execute("DELETE FROM oauth_states WHERE platform=?", (platform,))

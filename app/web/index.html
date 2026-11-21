@@ -38,6 +38,8 @@ select{width:100%;padding:10px;border:1px solid var(--line);border-radius:7px;ba
 details{margin-top:18px;color:var(--muted);font-size:12px}summary{cursor:pointer}pre{background:#eaf0e8;padding:18px;border-radius:9px;overflow:auto;line-height:1.6}
 footer{display:flex;justify-content:space-between;gap:16px;margin-top:40px;padding-top:18px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}[hidden]{display:none!important}
 @media(max-width:760px){header{padding:0 22px;height:72px}.api{display:none}main{padding:36px 18px}.workspace,.result-grid{grid-template-columns:1fr}.card-body{padding:22px}h1{letter-spacing:-1px}.result-head,footer{align-items:start;flex-direction:column}.intro{margin-bottom:25px}}
+.actions>div{display:flex;gap:7px;flex-wrap:wrap}.actions .connection-feedback{flex-basis:100%}.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.connection-feedback{font-size:12px;line-height:1.6;margin:10px 0 0;overflow-wrap:anywhere}.connection-feedback[data-success="false"]{color:#b63434}
+dialog{color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:28px;width:540px;max-width:calc(100vw - 32px);max-height:90vh}dialog::backdrop{background:#152e2c80}dialog form{display:grid;gap:16px}dialog h2{margin:0}dialog p{line-height:1.65;color:var(--muted);font-size:13px;margin:0}dialog label{margin-bottom:7px}dialog code{display:block;overflow-wrap:anywhere;background:var(--paper);padding:12px;border-radius:8px;font-size:12px}.dialog-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.dialog-head button{background:none;border:0;font-size:24px;color:var(--muted)}.setup-fields{display:grid;gap:16px}
 </style>
 </head>
 <body>
@@ -55,7 +57,7 @@ footer{display:flex;justify-content:space-between;gap:16px;margin-top:40px;paddi
 <button type="submit" class="send" id="send">Publish to all platforms <span aria-hidden="true">↗</span></button>
 <p class="note">This publishes to the accounts configured on this server. Each platform returns its own result.</p>
 </form></section>
-<aside class="card"><div class="card-body"><h2>Connected destinations</h2><div id="platforms" aria-live="polite">Checking configuration…</div></div><div class="side-note">Platform credentials are configured in the server’s .env file. “Configured” means credentials are present; authentication is checked when publishing.</div></aside>
+<aside class="card"><div class="card-body"><h2>Connected destinations</h2><div id="platforms" aria-live="polite">Checking configuration…</div></div><div class="side-note">Use Set up to save credentials, then Test connection to check account access. Settings stay on this server. Connection tests do not publish a post.</div></aside>
 </div>
 <div class="workspace" id="video-workspace" role="tabpanel" aria-labelledby="video-tab" hidden>
 <section class="card"><form id="video-composer" class="card-body video-fields">
@@ -78,11 +80,19 @@ footer{display:flex;justify-content:space-between;gap:16px;margin-top:40px;paddi
 <p class="note">Each platform receives this video independently. Processing may take a few minutes. A pending result means publication is still unconfirmed.</p>
 </form></section>
 <aside class="card"><div class="card-body"><h2>Video accounts</h2><div id="video-accounts">Loading accounts…</div><button class="connect" type="button" id="reload-accounts">Refresh connections</button></div>
-<div class="side-note">Connect accounts through each platform’s sign-in page. Developer app credentials go in .env. Instagram needs a public HTTPS media address. TikTok availability and visibility depend on app review and creator permissions.</div></aside>
+<div class="side-note">Connect accounts through each platform’s sign-in page. Use Set up to enter developer app details, save, then Connect. Test connection checks your authorized account. Instagram needs a public HTTPS media address. TikTok availability and visibility depend on app review and creator permissions.</div></aside>
 </div>
 <section class="results" id="results" hidden aria-live="polite"><div class="result-head"><h2>Delivery report</h2><span class="summary" id="summary"></span></div><div class="result-grid" id="result-grid"></div><details><summary>View API response</summary><pre id="response"></pre></details></section>
 <footer><span>All posting dates and times are UTC.</span><span>FastAPI · Mastodon · Bluesky · Telegram</span></footer>
 </main>
+<dialog id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form">
+<div class="dialog-head"><h2 id="settings-title">Platform setup</h2><button type="button" id="settings-close" aria-label="Close setup">×</button></div>
+<p id="settings-help"></p><div class="setup-fields" id="settings-fields"></div>
+<div id="redirect-section" hidden><label>Authorised redirect URI</label><code id="settings-redirect"></code><p>Register this exact address in your developer app. Open Dispatch using the application address when connecting.</p></div>
+<p>Leave a saved password or token blank to keep it. Credentials are stored in the local database and never returned to this page.</p>
+<p id="settings-feedback" role="status" aria-live="polite"></p>
+<button class="send" type="submit" id="settings-save">Save settings</button>
+</form></dialog>
 <script>
 const $ = id => document.getElementById(id);
 let requestKey = null, lastMessage = null, uncertain = false;
@@ -102,7 +112,7 @@ async function configure() {
       name.className = "platform-name"; name.textContent = platform.name;
       status.textContent = platform.configured ? "Configured" : "Credentials required";
       const dot = document.createElement("span"); dot.className = "indicator" + (platform.configured ? " ready" : "");
-      body.append(name, status); row.append(icon, body, dot); $("platforms").append(row);
+      body.append(name, status, connectionActions(platform.name.toLowerCase())); row.append(icon, body, dot); $("platforms").append(row);
     }
   } catch (e) { $("platforms").textContent = e.message; }
 }
@@ -169,7 +179,7 @@ async function videoAccounts() {
       const row = document.createElement("div"); row.className = "connection";
       const title = document.createElement("strong"); title.textContent = account.name;
       const status = document.createElement("small");
-      status.textContent = account.connected ? "Connected · " + account.account_name : account.configured ? "Ready to connect" : "Developer app setup required in .env";
+      status.textContent = account.connected ? "Connected · " + account.account_name : account.configured ? "Ready to connect" : "Developer app setup required";
       const connect = document.createElement("button"); connect.type = "button"; connect.className = "connect"; connect.textContent = account.connected ? "Reconnect" : "Connect"; connect.disabled = !account.configured;
       connect.addEventListener("click", async () => {
         try {
@@ -178,7 +188,7 @@ async function videoAccounts() {
           window.location.assign(response.authorization_url);
         } catch (e) { $("video-error").hidden = false; $("video-error").textContent = e.message; connect.disabled = false; }
       });
-      row.append(title, status, connect); $("video-accounts").append(row);
+      const actions = connectionActions(account.platform); actions.prepend(connect); row.append(title, status, actions); $("video-accounts").append(row);
       if (account.platform === "tiktok") connectedTikTok = account.connected;
     }
     if (connectedTikTok) {
@@ -230,6 +240,60 @@ $("video-composer").addEventListener("submit", async event => {
   finally { $("video-send").disabled=false; $("video-send").innerHTML='Publish video <span aria-hidden="true">↗</span>'; }
 });
 
+function connectionActions(platform) {
+  const actions = document.createElement("div"); actions.className = "actions";
+  const setup = document.createElement("button"); setup.type = "button"; setup.className = "connect"; setup.textContent = "Set up";
+  setup.addEventListener("click", () => openSettings(platform));
+  const test = document.createElement("button"); test.type = "button"; test.className = "connect"; test.textContent = "Test connection";
+  const feedback = document.createElement("p"); feedback.className = "connection-feedback"; feedback.setAttribute("role", "status");
+  test.addEventListener("click", async () => {
+    test.disabled = true; feedback.textContent = "Checking account access…";
+    try {
+      const data = await jsonResponse(await fetch("/settings/" + platform + "/test", {method:"POST", headers:apiHeaders()}));
+      feedback.textContent = data.message; feedback.dataset.success = String(data.success);
+    } catch (e) { feedback.textContent = e.message; feedback.dataset.success = "false"; }
+    finally { test.disabled = false; }
+  });
+  const container = document.createElement("div"); container.append(setup, test, feedback);
+  actions.append(container); return actions;
+}
+let setupPlatform = null;
+async function openSettings(platform) {
+  setupPlatform = platform; $("settings-feedback").textContent = "Loading settings…"; $("settings-fields").replaceChildren();
+  $("settings-title").textContent = ({youtube:"YouTube",instagram:"Instagram",tiktok:"TikTok",mastodon:"Mastodon",bluesky:"Bluesky",telegram:"Telegram"}[platform]) + " setup";
+  $("settings-help").textContent = ""; $("redirect-section").hidden = true; $("settings-save").disabled = true;
+  $("settings-dialog").showModal();
+  try {
+    const data = await jsonResponse(await fetch("/settings/" + platform, {headers:apiHeaders()}));
+    $("settings-help").textContent = data.help;
+    for (const field of data.fields) {
+      const wrap = document.createElement("div"), label = document.createElement("label"), input = document.createElement("input");
+      input.id = "setup-" + field.name; input.name = field.name; input.type = field.secret ? "password" : "text";
+      input.value = field.value; input.maxLength = 4096; input.autocomplete = field.secret ? "new-password" : "off";
+      input.placeholder = field.secret && field.saved ? "Saved · leave blank to keep" : field.label;
+      input.required = !field.saved && field.name !== "public_media_base_url";
+      label.htmlFor = input.id; label.textContent = field.label; wrap.append(label, input); $("settings-fields").append(wrap);
+      if (field.name === "app_base_url") input.addEventListener("input", () => { $("settings-redirect").textContent = input.value.replace(/\/$/, "") + "/oauth/" + platform + "/callback"; });
+    }
+    $("redirect-section").hidden = !data.redirect_uri; $("settings-redirect").textContent = data.redirect_uri || "";
+    $("settings-feedback").textContent = ""; $("settings-save").disabled = false;
+  } catch (e) { $("settings-feedback").textContent = e.message; }
+}
+$("settings-close").addEventListener("click", () => $("settings-dialog").close());
+$("settings-dialog").addEventListener("close", () => { $("settings-fields").replaceChildren(); });
+$("settings-form").addEventListener("submit", async event => {
+  event.preventDefault(); $("settings-save").disabled = true;
+  const values = Object.fromEntries(new FormData($("settings-form")));
+  try {
+    const data = await jsonResponse(await fetch("/settings/" + setupPlatform, {method:"PUT", headers:{...apiHeaders(), "Content-Type":"application/json"}, body:JSON.stringify({values})}));
+    await configure();
+    if (!$("video-workspace").hidden) await videoAccounts();
+    for (const input of $("settings-fields").querySelectorAll('input[type="password"]')) { input.value = ""; input.placeholder = "Saved · leave blank to keep"; input.required = false; }
+    $("settings-feedback").textContent = data.message;
+  } catch (e) { $("settings-feedback").textContent = e.message; }
+  finally { $("settings-save").disabled = false; }
+});
+$("api-key").addEventListener("change", () => { configure(); if (!$("video-workspace").hidden) videoAccounts(); });
 configure();
 </script>
 </body>
