@@ -12,6 +12,8 @@ const accountMenu=document.createElement('div');accountMenu.className='account-m
 accountMenu.innerHTML=`<select id="workspace-switch" aria-label="Current workspace"></select><button class="connect" id="new-workspace">New workspace</button><button class="connect" id="logout">Sign out</button>`;
 document.querySelector('header').append(accountMenu);
 const verificationBanner=document.createElement('div');verificationBanner.className='global-notice';verificationBanner.hidden=true;verificationBanner.innerHTML='<span id="verification-message">Verify your email to activate publishing and account connections.</span> <button class="connect" type="button" id="resend-verification">Resend verification</button>';document.querySelector('main').prepend(verificationBanner);
+const operationsBanner=document.createElement('div');operationsBanner.className='global-notice';operationsBanner.hidden=true;document.querySelector('main').prepend(operationsBanner);
+function showOperations(data){operationsBanner.hidden=!(data.workspace_suspended||data.maintenance_mode);operationsBanner.textContent=data.workspace_suspended?'This workspace is paused. You can manage billing or switch workspaces.':'Publishing and new provider connections are temporarily paused for maintenance.';}
 const overview=document.createElement('section');overview.id='overview-screen';overview.hidden=true;
 overview.innerHTML=`<div class="metric-grid"><div class="metric"><p>Publishing requests this month</p><strong id="metric-usage">0</strong><div class="usage-meter"><div id="usage-fill"></div></div></div><div class="metric"><p>Monthly allowance</p><strong id="metric-limit">50</strong></div><div class="metric"><p>Workspace plan</p><strong id="metric-plan">Free</strong></div></div><section class="card"><div class="card-body"><div class="result-head"><h2>Publishing activity</h2><button type="button" class="connect" id="refresh-history">Refresh</button></div><p class="note">Your latest 50 requests. Open a completed request to view its platform results.</p><div class="history-list" id="history-list"></div></div></section>`;
 const billing=document.createElement('section');billing.id='billing-screen';billing.hidden=true;
@@ -23,13 +25,16 @@ async function saasRequest(path,method='GET',data){
  return jsonResponse(await fetch(path,{method,headers:{...apiHeaders(),...(data?{'Content-Type':'application/json'}:{})},...(data?{body:JSON.stringify(data)}:{})}));
 }
 function screen(name){
+ if(name==='admin'&&!session?.user.admin)return;
  currentScreen=name; document.body.dataset.screen=name;
+ if(window.adminPanel)window.adminPanel.hidden=name!=='admin';
  for(const button of sidebar.querySelectorAll('[data-screen]'))button.classList.toggle('active',button.dataset.screen===name);
  overview.hidden=name!=='dashboard';billing.hidden=name!=='billing';
  $('text-workspace').hidden=name!=='compose'&&name!=='connections';$('video-workspace').hidden=name!=='connections';
  document.querySelector('.tabs').hidden=name!=='compose';$('results').hidden=true;
- const titles={dashboard:['Workspace overview','Your channels and publishing activity, in one place.'],compose:['Create something worth sharing.','Write a message or upload a video, then review every delivery result.'],connections:['Your connected accounts','Connect the channels you want to publish to. Connections belong to this workspace.'],billing:['Your plan, your pace.','Manage this workspace’s publishing allowance and subscription.']};
+ const titles={admin:['Administration','Manage people, workspaces, billing and service configuration.'],dashboard:['Workspace overview','Your channels and publishing activity, in one place.'],compose:['Create something worth sharing.','Write a message or upload a video, then review every delivery result.'],connections:['Your connected accounts','Connect the channels you want to publish to. Connections belong to this workspace.'],billing:['Your plan, your pace.','Manage this workspace’s publishing allowance and subscription.']};
  $('intro-title').textContent=titles[name][0];$('intro-description').textContent=titles[name][1];
+ if(name==='admin')window.loadAdmin?.();
  if(name==='connections'){configure();videoAccounts();}
  if(name==='compose'){selectTab(false);configure();}
  if(name==='dashboard'||name==='billing')refreshDashboard();
@@ -37,12 +42,16 @@ function screen(name){
 async function refreshDashboard(){
  if(!session?.authenticated)return;
  try{
-  const data=await saasRequest('/dashboard');
+  const data=await saasRequest('/dashboard');showOperations(data);
   $('metric-usage').textContent=data.usage;$('metric-limit').textContent=data.limit;$('metric-plan').textContent=data.plan==='pro'?'Pro':'Free';
   $('usage-fill').style.width=Math.min(100,data.usage/Math.max(1,data.limit)*100)+'%';
   $('free-allowance').textContent=data.free_limit;$('pro-allowance').textContent=data.pro_limit;
-  $('billing-state').textContent=data.billing_enabled?`Current plan: ${data.plan}. Subscription status: ${data.subscription_status}. Changes appear after Stripe confirms them.`:(session.user.admin?'Free accounts are available. Paid checkout is inactive until you configure Stripe.':'Free accounts are available. Pro subscriptions are not available yet. You can keep publishing on the Free plan.');
-  $('upgrade').disabled=!data.billing_enabled||data.plan==='pro';$('billing-portal').disabled=!data.billing_enabled;
+  $('billing-state').textContent=data.billing_enabled?`Current plan: ${data.plan}. Subscription status: ${data.subscription_status}. Changes appear after Stripe confirms them.`:(session.user.admin?'Free accounts are available. Configure Stripe in Administration to enable plan upgrades.':'Free accounts are available. Pro subscriptions are not available yet. You can keep publishing on the Free plan.');
+  if(data.billing_mode==='test'&&data.billing_enabled)$('billing-state').textContent+=' Billing is in test mode; checkout does not collect real payments.';
+  if(data.custom_allowance)$('billing-state').textContent+=' This workspace has an administrator-set allowance of '+data.limit+' requests, which stays in place until the administrator removes it.';
+  if(data.workspace_suspended||data.maintenance_mode)$('billing-state').textContent+=' Publishing is currently paused.';
+  if(!data.upgrades_enabled)$('billing-state').textContent+=' New paid upgrades are temporarily paused.';
+  $('upgrade').disabled=!data.billing_enabled||!data.upgrades_enabled||data.plan==='pro';$('billing-portal').disabled=!data.billing_enabled;
   $('history-list').replaceChildren();
   if(!data.history.length){const empty=document.createElement('div');empty.className='empty-state';empty.innerHTML='<div class="empty-symbol">＋</div><strong>Your next post starts here.</strong><p>Connect an account and create a post. Its results will appear here.</p>';const button=document.createElement('button');button.className='connect';button.textContent='Connect accounts';button.onclick=()=>screen('connections');empty.append(button);$('history-list').append(empty);}
   for(const item of data.history){
@@ -57,13 +66,15 @@ async function bootstrap(){
  try{
   const verificationToken=new URLSearchParams(location.hash.slice(1)).get('verify');
   if(verificationToken){history.replaceState(null,'',location.pathname);const result=await saasRequest('/auth/verify-email','POST',{token:verificationToken});verifiedNotice=result.message;}
-  session=await jsonResponse(await fetch('/auth/me'));window.dispatchUser=session.user||null;
+  session=await jsonResponse(await fetch('/auth/me'));window.dispatchUser=session.user||null;document.dispatchEvent(new CustomEvent('dispatch-session'));
   document.body.classList.remove('booting');
   if(!session.saas){await configure();return;}
   document.body.classList.toggle('saas',session.authenticated);
   authScreen.hidden=session.authenticated;document.querySelector('header').hidden=!session.authenticated;document.querySelector('main').hidden=!session.authenticated;sidebar.hidden=!session.authenticated;accountMenu.hidden=!session.authenticated;
   if(resetToken){authScreen.hidden=false;document.querySelector('header').hidden=true;document.querySelector('main').hidden=true;sidebar.hidden=true;accountMenu.hidden=true;setAuthMode('reset');return;}
-  if(!session.authenticated){if(resetToken)setAuthMode('reset');else if(verifiedNotice)$('auth-description').textContent=verifiedNotice;return;}
+  if(!session.authenticated){$('auth-toggle').hidden=session.registration_open===false&&!recovering;if(session.registration_open===false)$('auth-prompt').textContent='New account registration is paused.';if(resetToken)setAuthMode('reset');else if(verifiedNotice)$('auth-description').textContent=verifiedNotice;return;}
+  if(currentScreen==='admin'&&!session.user.admin)currentScreen='dashboard';
+  showOperations({maintenance_mode:session.maintenance_mode,workspace_suspended:session.workspaces.find(item=>item.id===session.workspace)?.suspended});
   verificationBanner.hidden=!(session.verification_required&&!session.user.verified);
   $('workspace-switch').replaceChildren();for(const item of session.workspaces)$('workspace-switch').add(new Option(item.name,item.id));$('workspace-switch').value=session.workspace;
   document.querySelector("header .logo").textContent="Publishing workspace";
@@ -73,6 +84,8 @@ async function bootstrap(){
  }catch(e){document.body.classList.remove('booting');document.querySelector('header').hidden=true;document.querySelector('main').hidden=true;sidebar.hidden=true;accountMenu.hidden=true;authScreen.hidden=false;$('auth-error').hidden=false;$('auth-error').textContent=e.message;}
 }
 function setAuthMode(mode){
+ if(mode==='register'&&session?.registration_open===false){$('auth-error').textContent='New registrations are currently paused.';$('auth-error').hidden=false;return;}
+ $('auth-toggle').hidden=mode==='login'&&session?.registration_open===false;
  registering=mode==='register';recovering=mode==='forgot';
  const reset=mode==='reset';
  $('name-row').hidden=!registering;$('auth-email').parentElement.hidden=reset;$('auth-email').required=!reset;

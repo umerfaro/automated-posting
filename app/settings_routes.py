@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter
 
 from app.platforms.base import PlatformError, checked
 from app.tenancy import identity, workspace
+from app.config import OPERATOR_KEYS
 
 # The browser receives field metadata and saved flags, never stored secret values.
 FIELDS = {
@@ -50,7 +51,7 @@ class RuntimeSettings:
                     shared = self.store.settings()
                 finally:
                     workspace.reset(token)
-                keys = {'google_client_id','google_client_secret','instagram_app_id','instagram_app_secret','tiktok_client_key','tiktok_client_secret','app_base_url','public_media_base_url'}
+                keys = OPERATOR_KEYS
                 base = replace(base, **{key:value for key,value in shared.items() if key in keys})
                 values = {key:value for key,value in values.items() if key not in keys}
         return replace(base, **values)
@@ -142,6 +143,8 @@ def router(settings, authorize):
             with request.app.state.store.connect() as db:
                 db.execute("DELETE FROM accounts WHERE platform LIKE ?", ('%:' + platform,))
                 db.execute("DELETE FROM oauth_states WHERE platform LIKE ?", ('%:' + platform,))
+        if settings.saas_enabled:
+            request.app.state.saas.audit('integration.updated','platform',platform,{'fields':sorted(values)})
         return {**metadata(platform), 'message': 'Saved. Connect again to authorize the updated app.' if changed_app else 'Saved. Settings are active immediately.'}
 
     @routes.post('/{platform}/test')

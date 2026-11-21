@@ -68,7 +68,7 @@ YouTube uses resumable upload, Instagram uses a publicly fetchable random media 
 
 Free defaults to 50 publishing requests per workspace per UTC calendar month. Pro defaults to 1,000. Configure FREE_MONTHLY_POSTS and PRO_MONTHLY_POSTS to change allowances. One request can deliver to three platforms. Failed, pending and interrupted requests count because delivery may already have occurred. Quota reservation and request-key creation share one database transaction. Limit exhaustion returns 402 before another provider delivery.
 
-Billing remains inactive until all of these are configured:
+Configure billing through **Administration → Stripe & subscriptions**. The form verifies and saves the platform configuration immediately. Environment variables remain an optional startup fallback. Billing remains inactive until all of these are configured:
 
 - STRIPE_SECRET_KEY
 - STRIPE_WEBHOOK_SECRET
@@ -98,7 +98,7 @@ This release is a single-node MVP. Publishing runs within the HTTP request, and 
 python -m unittest discover -s tests -v
 ```
 
-All 56 tests passed locally and inside the Linux Docker image. A separate container smoke test verified real HTTP flows, non-root execution and encrypted data/session persistence across restart.
+All 76 tests passed locally and inside the Linux Docker image. A separate container smoke test verified real HTTP flows, non-root execution and encrypted data/session persistence across restart.
 
 Tests use HTTPX MockTransport and local FFmpeg fixtures. They cover existing provider protocols plus SaaS authentication, workspace isolation, encrypted persistence, CSRF, membership checks, usage limits, idempotency, OAuth state ownership and signed Stripe events. Browser QA uses an isolated database and does not create users in the operator's real database.
 
@@ -112,3 +112,28 @@ To repeat the integration suite inside the container:
 docker build -t dispatch-saas:local .
 docker run --rm -v "$PWD/tests:/app/tests:ro" dispatch-saas:local python -m unittest discover -s tests -v
 ```
+
+## Administration
+
+Administrators have an **Administration** sidebar entry with Overview, Users, Workspaces, Publishing, Stripe & subscriptions, Platform settings and Audit log.
+
+- Search and paginate users, change administrator roles, suspend/reactivate access and revoke sessions. Your signed-in administrator cannot demote or suspend itself.
+- Rename or pause workspaces and set optional publishing-allowance overrides. Overrides change usage limits, without changing a Stripe subscription or claiming payment.
+- Inspect publishing metadata and service configuration without reading customer post content or social credentials.
+- Control registration, maintenance, new paid upgrades, default plan allowances, approved social API hosts and SMTP settings. Maintenance pauses new publication and provider connections; existing requests may finish.
+- Configure shared video apps and send a test email to the signed-in administrator.
+- Review an audit of privileged changes and subscription updates. Configuration secrets are never included in audit details.
+
+Suspension is separate from Stripe cancellation. Suspending a user revokes sessions and blocks sign-in; recurring billing continues until canceled in Stripe. A paused workspace still allows its owner to open the billing portal. Operators should handle paid-account requests through Stripe rather than assuming suspension cancels a subscription.
+
+### Set up the platform Stripe account in the browser
+
+Open **Administration → Stripe & subscriptions**. Links take you to Stripe API keys, products/prices, webhooks and customer-portal settings. Enter the platform secret/restricted key, an active paid recurring Pro price ID, and the webhook signing secret. Use **Test Stripe connection**, then **Save Stripe settings**. Saving also performs the read-only account/price checks before activation. No charge is created by testing or saving.
+
+Blank secrets preserve saved values. Saved values are encrypted and override environment defaults immediately, including after restart. Ordinary users cannot access these fields. Users open **Plan & billing → Upgrade to Pro**, complete platform-owned Checkout, and receive Pro only after a signed subscription event confirms entitlement.
+
+The account/price test cannot verify a webhook secret without a delivered event. The form displays the exact endpoint, required subscription event types, and whether a signed event arrived after the latest save. Configure the Stripe customer portal separately. Restricted keys need permission for the account/price reads and the customer, checkout, portal and subscription operations used by the app.
+
+Changing the Stripe account or test/live mode is blocked after customer billing becomes linked. Use separate staging/production data or a planned billing migration. Rotating the Pro price retains prior configured price IDs for existing paid subscriptions. A single-process billing lock prevents account configuration changes from racing an in-flight checkout. Multi-worker deployments require coordinated locking.
+
+Platform settings include a separate **Allow new paid upgrades** switch. Disabling it preserves customer-portal access and signed webhook processing. All purchase amounts remain defined by the configured Stripe price and are shown in Checkout.

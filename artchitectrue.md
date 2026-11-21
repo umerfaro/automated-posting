@@ -89,8 +89,22 @@ The delivered deployment is one FastAPI node, SQLite, a private data volume and 
 
 For multiple replicas, replace SQLite with PostgreSQL and explicit tenant columns/row-level policies, place media in object storage and dispatch publication via a durable queue with worker leases. Separate webhook reconciliation jobs from HTTP delivery when scaling. Use a managed secret store and coordinated token-refresh locking.
 
-Before broad public launch, configure and verify SMTP delivery, then add operator audit trails, external monitoring/backups, application abuse controls and network egress restrictions. Team invitations, role delegation, multiple accounts per provider and scheduled publication are future product work. Current workspaces are owner-managed, with one account per platform. These capabilities are not represented as completed features.
+Before broad public launch, configure and verify SMTP delivery, then add external monitoring/backups, application abuse controls and network egress restrictions. Team invitations, role delegation, multiple accounts per provider and scheduled publication are future product work. Current workspaces are owner-managed, with one account per platform. These capabilities are not represented as completed features.
 
 ## Verification boundary
 
 Provider and Stripe integration tests use real protocol shapes with mocked HTTP responses. Tests prove isolation, request safety and entitlement behavior. They do not prove production account approval, delivery quotas or live payment settlement. Browser journeys run on an isolated test database. No live external posts or charges were made.
+
+## Administration and platform billing configuration
+
+app/admin.py exposes a role-checked /admin API. Every route shares session authorization, and mutations also require the existing session-bound CSRF token. Administrator status is read from the database on each request. Suspension invalidates sessions, stops login and removes outstanding authorization states. Workspace pause is separate from account suspension and preserves billing-portal access. Privileged user/workspace changes require a reason and are committed with an audit record. The signed-in administrator cannot remove its own access.
+
+Additive migrations introduce account suspension/creation/login metadata, workspace suspension/allowance override fields, and an audit_log table. Historical user timestamps remain unknown rather than being invented. Existing credentials, workspaces, request ledgers and subscriptions remain intact.
+
+OPERATOR_KEYS defines the global configuration boundary. Only administrator APIs update platform Stripe, SMTP, policy and allowance settings. Persisted values use the existing Fernet encryption and are merged into immutable request snapshots. Bootstrap reads infrastructure defaults until the credential vault is initialized, allowing encrypted global settings to survive a fresh application start. Deployment-only encryption/database/trusted-host values remain outside the browser editor.
+
+Stripe activation reads the authenticated account and selected price before saving. Prices must be active, paid, fixed recurring prices in the key's test/live mode. Live billing additionally requires enabled charges. Secret readback is replaced by saved flags. Activation records account identity, validation time and accepted prior price IDs. Existing subscriptions using an earlier configured Pro price retain entitlement when the new price is selected for future checkout.
+
+Account/mode changes are blocked once customer references exist. The single-process billing lock serializes checkout and Stripe configuration activation, including the period before a newly created customer ID is persisted. Signed event processing rechecks event IDs within its update transaction so concurrent delivery does not duplicate the audit entry. Webhook receipt is distinct from read-only API validation.
+
+app/web/assets/admin.js provides the admin UI. Customers see plan-purchase controls and cannot retrieve admin configuration. The admin publishing view exposes operational metadata, without customer post bodies or credentials. Audit logs store privileged actions, reasons and configuration field names; secret-shaped values in reasons are redacted. Console administrator promotion is also audited.

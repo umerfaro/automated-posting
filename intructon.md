@@ -55,7 +55,7 @@ Verification links expire in 24 hours and reset links in one hour. Resending cre
 ## Activate subscription infrastructure
 
 1. Create a recurring Pro product/price in Stripe test mode. Choose your actual price and currency there.
-2. Configure STRIPE_SECRET_KEY, STRIPE_PRO_PRICE_ID and STRIPE_WEBHOOK_SECRET in the deployment environment. Restart after changes.
+2. Open Administration → Stripe & subscriptions, enter the API key, Pro price ID and webhook secret, then test and save. Environment variables remain an optional startup fallback. Saved UI settings take precedence.
 3. Configure the Stripe customer portal to allow the subscription operations you want customers to use.
 4. Register the HTTPS /billing/webhook endpoint. Subscribe to customer.subscription.created, customer.subscription.updated and customer.subscription.deleted.
 5. For local testing, forward events with the Stripe CLI. Use the forwarding secret as STRIPE_WEBHOOK_SECRET.
@@ -77,11 +77,11 @@ docker compose exec dispatch python -m app.manage promote your@email.com
 
 Compose binds the app to local port 4000. Put a trusted HTTPS reverse proxy in front of it, preserve the named data volume, configure request/upload size limits and allow enough request time for provider uploads. Set ALLOWED_HOSTS to the trusted public hostnames and forward only trusted proxy headers. Keep the public media path reachable by Instagram.
 
-The Docker image was built successfully and tested as UID 10001. All 56 tests passed inside Linux Docker. An isolated container also passed real HTTP signup, administrator promotion, encrypted credential persistence across restart, workspace isolation, idempotency/history, authentication and billing-inactive checks. Cloud deployment and live SMTP/Stripe/provider setup still need staging verification before inviting paying users.
+The Docker image was built successfully and tested as UID 10001. All 76 tests passed inside Linux Docker. An isolated container also passed real HTTP signup, administrator promotion, encrypted credential persistence across restart, workspace isolation, idempotency/history, authentication and billing-inactive checks. Cloud deployment and live SMTP/Stripe/provider setup still need staging verification before inviting paying users.
 
 ## Verification record
 
-- All 56 automated tests passed locally and inside the built Linux Docker image, including the original 27 provider/settings tests.
+- All 76 automated tests passed locally and inside the built Linux Docker image, including the original 27 provider/settings tests.
 - Added coverage for account/session behavior, membership checks, encrypted credentials, workspace isolation, OAuth-state ownership, quota/request replay and Stripe signatures/entitlements.
 - Browser journey verified signup, credential save/disconnect, failed publication/history, usage, billing inactive state, separate new workspace, mobile layout, sign-out and sign-in. Forgot/reset forms and same-tab fragment navigation passed with mocked responses.
 - Browser test users exist only in an isolated temporary test database. No live social post or payment was attempted.
@@ -92,3 +92,19 @@ The Docker image was built successfully and tested as UID 10001. All 56 tests pa
 The current product runs as an owner-managed SaaS MVP. Before a broad public launch, configure and verify transactional SMTP, abuse controls, audit logs, monitoring, backup/restore drills and restricted network egress for user-defined social servers. Register production social apps, complete provider reviews, configure Stripe and deploy behind HTTPS.
 
 For more than one app node, move to PostgreSQL, shared object storage and a durable publication queue. Team invitations/roles, scheduling and multiple accounts per provider are future features. Do not claim them in product copy until implemented.
+
+## Administrator panel update
+
+Refresh the app and sign in as an administrator. Open **Administration** from the sidebar. The existing local account already has administrator access. For a separate deployment, the console promotion command above remains available.
+
+Implemented Overview, searchable/paginated Users and Workspaces, publishing metadata, Stripe subscription setup, global policy/SMTP settings and an audit log. User actions include role changes, suspension/reactivation and session revocation. Workspace actions include rename, pause/resume and custom publishing allowance. Admin actions require a reason where relevant and preserve records rather than deleting user data.
+
+Use **Administration → Stripe & subscriptions** to enter the platform API key, Pro recurring price ID and webhook secret. Test connection reads the account and price. Save validates again, encrypts the configuration and activates it immediately. Customers then buy a Dispatch plan through **Plan & billing**; they never set up a merchant Stripe account or supply Stripe keys. Environment configuration remains available as a startup fallback, and saved UI configuration takes precedence.
+
+Register the displayed webhook URL in Stripe with the listed subscription events. A signed event is required to confirm delivery; the account/price test alone cannot prove the webhook secret is correct. Save blank secrets to keep current values. Configure the customer portal in Stripe. Use staging/test-mode setup before enabling live billing.
+
+Do not assume suspension cancels billing. Suspended user accounts cannot sign in. Paused workspaces can still open the customer portal. Use the linked Stripe subscription view to handle cancellation requests. To pause only new purchases, disable **Allow new paid upgrades**; portal and webhook processing continue.
+
+The latest browser checks used an isolated database and mocked Stripe APIs. They covered admin role controls, suspension/reactivation, custom allowance, maintenance, Stripe form validation/save, customer Checkout navigation and signed Pro activation, customer access denial, encrypted restart persistence, and desktop/mobile layouts. No real Stripe traffic, payment, post or email was generated by these tests.
+
+Admin release verification: all 76 tests passed locally and inside Linux Docker. Coverage includes role/CSRF enforcement, account/workspace suspension, session revocation, custom quotas, registration/maintenance/upgrade switches, Stripe account/price validation, price grandfathering, encrypted global-settings restart, and account-rotation/checkout serialization. Browser tests verified the administrative journey and a mocked customer Checkout plus signed Pro activation.

@@ -20,6 +20,8 @@ def main():
         if not exists:
             parser.error('Register this account in Dispatch first.')
         db.execute('UPDATE users SET admin=1 WHERE id=?',(exists[0],))
+        if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='audit_log'").fetchone():
+            db.execute("INSERT INTO audit_log(actor,action,target_kind,target_id,details) VALUES ('console','user.promoted','user',?,?)",(exists[0],'{"source":"deployment console"}'))
     print('Administrator access granted. Refresh the signed-in account.')
 
 

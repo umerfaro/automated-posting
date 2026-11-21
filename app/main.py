@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import Settings
+from app.admin import router as admin_router
 from app.settings_routes import RuntimeSettings, router as settings_router
 from app.schemas import PostingRequest, PostingResponse
 from app.services.posting_service import PostingService
@@ -33,10 +34,10 @@ def create_app(settings=None, transport=None):
             timeout=httpx.Timeout(settings.timeout), follow_redirects=False,
             transport=transport, headers={"User-Agent": "AutomatedPosting/1.0"},
         ) as client:
-            app.state.store = Store(settings.database_path)
+            app.state.store = Store(settings.baseline.database_path)
             settings.store = app.state.store
             app.state.client = client
-            if settings.saas_enabled:
+            if settings.baseline.saas_enabled:
                 app.state.saas = SaaS(app.state.store, settings, client)
             app.state.service = PostingService(settings, client)
             app.state.video_accounts = VideoAccounts(settings, app.state.store, client)
@@ -75,7 +76,15 @@ def create_app(settings=None, transport=None):
             user = identity.get()
             if not user:
                 raise HTTPException(401, "Sign in to your workspace.")
-            if settings.email_verification_required and not user['verified'] and (request.url.path in ('/posting','/video-posting','/billing/checkout') or request.url.path.endswith(('/test','/connect'))):
+            path=request.url.path
+            administrative=path.startswith('/admin/')
+            safe_read=request.method in ('GET','HEAD') and (path in ('/dashboard','/config','/video/accounts') or path.startswith('/settings/'))
+            if user.get('workspace_suspended') and not (administrative or safe_read or path.startswith(('/auth/','/workspaces')) or path=='/billing/portal'):
+                raise HTTPException(403,'This workspace is suspended. Contact the administrator or switch workspace.')
+            provider_operation=path in ('/posting','/video-posting','/video/tiktok-creator') or path.endswith(('/test','/connect'))
+            if settings.maintenance_mode and provider_operation and not administrative:
+                raise HTTPException(503,'Publishing and provider connections are temporarily paused for maintenance.')
+            if settings.email_verification_required and not user['verified'] and not administrative and (request.url.path in ('/posting','/video-posting','/billing/checkout') or request.url.path.endswith(('/test','/connect'))):
                 raise HTTPException(403, 'Verify your email before publishing or connecting accounts. Use Resend verification in your workspace.')
             if request.method not in ('GET', 'HEAD', 'OPTIONS'):
                 app.state.saas.origin(request)
@@ -130,6 +139,7 @@ def create_app(settings=None, transport=None):
 
     app.mount("/assets", StaticFiles(directory=Path(__file__).parent / "web/assets"), name="assets")
     app.include_router(saas_router(settings, authorize))
+    app.include_router(admin_router(settings, authorize))
     app.include_router(settings_router(settings, authorize))
     app.include_router(video_router(settings, authorize))
     return app

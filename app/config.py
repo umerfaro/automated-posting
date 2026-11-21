@@ -8,6 +8,14 @@ from dotenv import load_dotenv
 from pydantic import HttpUrl, TypeAdapter
 
 ROOT = Path(__file__).resolve().parent.parent
+OPERATOR_KEYS = frozenset({
+    'google_client_id','google_client_secret','instagram_app_id','instagram_app_secret',
+    'tiktok_client_key','tiktok_client_secret','app_base_url','public_media_base_url',
+    'stripe_secret_key','stripe_webhook_secret','stripe_pro_price_id','stripe_account_id',
+    'stripe_accepted_price_ids','stripe_tested_at','free_monthly_posts','pro_monthly_posts',
+    'smtp_host','smtp_port','smtp_username','smtp_password','smtp_from',
+    'email_verification_required','registration_enabled','maintenance_mode','upgrades_enabled','social_allowed_hosts',
+})
 
 
 def endpoint(name: str, default: str) -> str:
@@ -50,6 +58,12 @@ class Settings:
     stripe_pro_price_id: str = ""
     free_monthly_posts: int = 50
     pro_monthly_posts: int = 1000
+    upgrades_enabled: bool = True
+    registration_enabled: bool = True
+    maintenance_mode: bool = False
+    stripe_account_id: str = ""
+    stripe_accepted_price_ids: tuple[str, ...] = ()
+    stripe_tested_at: float = 0
     email_verification_required: bool = False
     smtp_host: str = ""
     smtp_port: int = 587
@@ -99,6 +113,9 @@ class Settings:
             stripe_pro_price_id=os.getenv("STRIPE_PRO_PRICE_ID", "").strip(),
             free_monthly_posts=int(os.getenv("FREE_MONTHLY_POSTS", "50")),
             pro_monthly_posts=int(os.getenv("PRO_MONTHLY_POSTS", "1000")),
+            upgrades_enabled=os.getenv("UPGRADES_ENABLED", "true").lower() == "true",
+            registration_enabled=os.getenv("REGISTRATION_ENABLED", "true").lower() == "true",
+            maintenance_mode=os.getenv("MAINTENANCE_MODE", "false").lower() == "true",
             email_verification_required=os.getenv("REQUIRE_EMAIL_VERIFICATION", "true" if os.getenv("APP_BASE_URL", "").startswith("https://") else "false").lower() == "true",
             smtp_host=os.getenv("SMTP_HOST", "").strip(),
             smtp_port=int(os.getenv("SMTP_PORT", "587")),

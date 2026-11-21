@@ -67,6 +67,8 @@ def router(settings, authorize):
                        state: str = "", code: str = "", error: str = ""):
         if settings.saas_enabled and not identity.get():
             raise HTTPException(401, "Sign in again before reconnecting this account.")
+        if settings.saas_enabled and (identity.get().get("workspace_suspended") or settings.maintenance_mode):
+            raise HTTPException(403, "Account connections are paused for this workspace.")
         cookie = request.cookies.get("oauth_" + platform, "")
         if not state or not secrets.compare_digest(cookie, state):
             raise HTTPException(400, "OAuth state mismatch. Start Connect again from this browser.")

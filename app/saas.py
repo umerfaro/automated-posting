@@ -1,6 +1,7 @@
 """Single-node SaaS identity, workspace isolation, usage and billing infrastructure."""
 import asyncio
 import hashlib
+from functools import wraps
 import hmac
 import json
 import os
@@ -24,6 +25,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.tenancy import identity, workspace
 
 COOKIE = 'dispatch_session'
+
+
+def serialized_billing(function):
+    @wraps(function)
+    async def guarded(*args, **kwargs):
+        request=kwargs.get('request') or next(value for value in args if isinstance(value,Request))
+        async with request.app.state.saas.billing_lock:
+            return await function(*args,**kwargs)
+    return guarded
 
 
 class Credentials(BaseModel):
@@ -76,9 +86,12 @@ def password_hash(password, salt):
 class SaaS:
     def __init__(self, store, settings, client):
         self.store, self.settings, self.client = store, settings, client
-        key = settings.encryption_key
+        self.started_at = time.time()
+        self.billing_lock = asyncio.Lock()
+        bootstrap=getattr(settings,'baseline',settings)
+        key = bootstrap.encryption_key
         if not key:
-            keyfile = Path(settings.database_path).parent / 'master.key'
+            keyfile = Path(bootstrap.database_path).parent / 'master.key'
             try:
                 descriptor = os.open(keyfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             except FileExistsError:
@@ -112,6 +125,19 @@ class SaaS:
             ''')
             if 'verified' not in {row[1] for row in db.execute('PRAGMA table_info(users)')}:
                 db.execute('ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0')
+            for table, name, definition in (
+                ('users','suspended','INTEGER NOT NULL DEFAULT 0'),
+                ('users','created','REAL NOT NULL DEFAULT 0'),
+                ('users','last_login','REAL NOT NULL DEFAULT 0'),
+                ('workspaces','suspended','INTEGER NOT NULL DEFAULT 0'),
+                ('workspaces','quota_override','INTEGER'),
+            ):
+                if name not in {row[1] for row in db.execute(f'PRAGMA table_info({table})')}:
+                    db.execute(f'ALTER TABLE {table} ADD COLUMN {name} {definition}')
+            db.execute("""CREATE TABLE IF NOT EXISTS audit_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,actor TEXT NOT NULL,action TEXT NOT NULL,
+                target_kind TEXT NOT NULL,target_id TEXT NOT NULL,details TEXT NOT NULL,
+                created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
             # Preserve existing local data while encrypting credential material in place.
             for table, column, primary in [('settings','value','name'),('accounts','payload','platform')]:
                 for name,value in db.execute(f'SELECT {primary},{column} FROM {table}').fetchall():
@@ -128,10 +154,10 @@ class SaaS:
         if not cookie:
             return None
         with self.store.connect() as db:
-            row = db.execute('''SELECT u.id,u.email,u.name,u.admin,s.workspace,s.csrf,s.hash,u.verified FROM sessions s
+            row = db.execute('''SELECT u.id,u.email,u.name,u.admin,s.workspace,s.csrf,s.hash,u.verified,w.suspended FROM sessions s
                 JOIN users u ON u.id=s.user JOIN workspaces w ON w.id=s.workspace AND w.owner=u.id
-                WHERE s.hash=? AND s.expires>?''',(hashlib.sha256(cookie.encode()).hexdigest(),time.time())).fetchone()
-        return dict(zip(('id','email','name','admin','workspace','csrf','session_hash','verified'),row)) if row else None
+                WHERE s.hash=? AND s.expires>? AND u.suspended=0''',(hashlib.sha256(cookie.encode()).hexdigest(),time.time())).fetchone()
+        return dict(zip(('id','email','name','admin','workspace','csrf','session_hash','verified','workspace_suspended'),row)) if row else None
 
     def throttle(self, request, email):
         address = request.client.host if request.client else 'unknown'
@@ -153,6 +179,9 @@ class SaaS:
     def session_response(self, user, selected):
         token, csrf = secrets.token_urlsafe(48), secrets.token_urlsafe(32)
         with self.store.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT id FROM users WHERE id=? AND suspended=0',(user,)).fetchone():
+                raise HTTPException(403,'This account is suspended. Contact the administrator.')
             db.execute('DELETE FROM sessions WHERE expires<?',(time.time(),))
             db.execute('INSERT INTO sessions VALUES (?,?,?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),user,selected,csrf,time.time()+7*86400))
         response = JSONResponse({'success':True})
@@ -160,32 +189,49 @@ class SaaS:
         return response
 
     def reserve(self, db, selected, request_key, kind, title):
-        plan = db.execute('SELECT plan FROM workspaces WHERE id=?',(selected,)).fetchone()
+        plan = db.execute('SELECT plan,suspended,quota_override FROM workspaces WHERE id=?',(selected,)).fetchone()
         if not plan:
             raise HTTPException(403,'Workspace unavailable.')
-        limit = self.settings.pro_monthly_posts if plan[0]=='pro' else self.settings.free_monthly_posts
+        if plan[1] or self.settings.maintenance_mode:
+            raise HTTPException(403,'Publishing is paused for this workspace or by the administrator.')
+        limit = plan[2] if plan[2] is not None else (self.settings.pro_monthly_posts if plan[0]=='pro' else self.settings.free_monthly_posts)
         used = db.execute("SELECT count(*) FROM publications WHERE workspace=? AND strftime('%Y-%m',created)=strftime('%Y-%m','now')",(selected,)).fetchone()[0]
         if used>=limit:
-            raise HTTPException(402,'Workspace monthly publishing limit reached. Manage your plan in Billing.')
+            raise HTTPException(402,'Your custom publishing allowance has been reached. Contact the administrator.' if plan[2] is not None else 'Workspace monthly publishing limit reached. Manage your plan in Billing.')
         db.execute('INSERT INTO publications(id,workspace,request_key,kind,title,status) VALUES (?,?,?,?,?,?)',
                    (secrets.token_hex(16),selected,request_key,kind,title[:100],'processing'))
 
     def workspaces(self, user):
         with self.store.connect() as db:
-            rows=db.execute('SELECT id,name,plan,status FROM workspaces WHERE owner=? ORDER BY created',(user,)).fetchall()
-        return [dict(zip(('id','name','plan','status'),row)) for row in rows]
+            rows=db.execute('SELECT id,name,plan,status,suspended FROM workspaces WHERE owner=? ORDER BY created',(user,)).fetchall()
+        return [dict(zip(('id','name','plan','status','suspended'),row)) for row in rows]
 
     def overview(self):
         selected=workspace.get()
         with self.store.connect() as db:
             rows=db.execute('SELECT id,kind,title,status,response,created FROM publications WHERE workspace=? ORDER BY created DESC,rowid DESC LIMIT 50',(selected,)).fetchall()
             used=db.execute("SELECT count(*) FROM publications WHERE workspace=? AND strftime('%Y-%m',created)=strftime('%Y-%m','now')",(selected,)).fetchone()[0]
-            plan=db.execute('SELECT plan,status FROM workspaces WHERE id=?',(selected,)).fetchone()
+            plan=db.execute('SELECT plan,status,suspended,quota_override FROM workspaces WHERE id=?',(selected,)).fetchone()
         history=[dict(zip(('id','kind','title','status','response','created'),row)) for row in rows]
         for item in history:
             item['response']=json.loads(item['response']) if item['response'] else None
-        return {'history':history,'usage':used,'limit':self.settings.pro_monthly_posts if plan[0]=='pro' else self.settings.free_monthly_posts,
+        return {'history':history,'usage':used,'limit':plan[3] if plan[3] is not None else (self.settings.pro_monthly_posts if plan[0]=='pro' else self.settings.free_monthly_posts),
+                'workspace_suspended':bool(plan[2]),'custom_allowance':plan[3] is not None,'upgrades_enabled':self.settings.upgrades_enabled,
+                'billing_mode':'live' if self.settings.stripe_secret_key.startswith(('sk_live_','rk_live_')) else 'test' if self.settings.stripe_secret_key else 'unconfigured','maintenance_mode':self.settings.maintenance_mode,
                 'free_limit':self.settings.free_monthly_posts,'pro_limit':self.settings.pro_monthly_posts,'plan':plan[0],'subscription_status':plan[1],'billing_enabled':self.billing_enabled()}
+
+    def audit(self, action, target_kind, target_id, details=None, db=None, actor=None):
+        user=identity.get()
+        actor=actor or (user['id'] if user else 'system')
+        payload=json.dumps(details or {})
+        # Configuration audits record field names, never their secret values.
+        payload=re.sub(r'\b(?:sk|rk|pk)_(?:test|live)_[A-Za-z0-9]+|\bwhsec_[A-Za-z0-9]+','[redacted]',payload)
+        values=(actor,action,target_kind,target_id,payload)
+        if db is not None:
+            db.execute('INSERT INTO audit_log(actor,action,target_kind,target_id,details) VALUES (?,?,?,?,?)',values)
+        else:
+            with self.store.connect() as connection:
+                connection.execute('INSERT INTO audit_log(actor,action,target_kind,target_id,details) VALUES (?,?,?,?,?)',values)
 
     def mail_configured(self):
         return bool(self.settings.smtp_host and self.settings.smtp_from)
@@ -232,10 +278,10 @@ class SaaS:
     def billing_enabled(self):
         return bool(self.settings.stripe_secret_key and self.settings.stripe_pro_price_id and self.settings.stripe_webhook_secret)
 
-    async def stripe(self, method, path, data=None, headers=None):
+    async def stripe(self, method, path, data=None, headers=None, secret_key=None):
         try:
             response=await self.client.request(method,'https://api.stripe.com/v1/'+path,data=data,
-                headers={'Authorization':'Bearer '+self.settings.stripe_secret_key,'Stripe-Version':'2026-11-18.endive',**(headers or {})})
+                headers={'Authorization':'Bearer '+(secret_key or self.settings.stripe_secret_key),'Stripe-Version':'2026-11-18.endive',**(headers or {})})
         except httpx.RequestError:
             raise HTTPException(503,'Billing is temporarily unavailable. Try again shortly.') from None
         if response.status_code>=400:
@@ -264,13 +310,15 @@ def router(settings, authorize):
         saas=service(request)
         user=identity.get()
         if not user:
-            return {'saas':True,'authenticated':False}
-        return {'saas':True,'authenticated':True,'verification_required':settings.email_verification_required,'user':{k:user[k] for k in ('id','email','name','admin','verified')},
+            return {'saas':True,'authenticated':False,'registration_open':settings.registration_enabled}
+        return {'saas':True,'authenticated':True,'verification_required':settings.email_verification_required,'maintenance_mode':settings.maintenance_mode,'user':{k:user[k] for k in ('id','email','name','admin','verified')},
                 'csrf':user['csrf'],'workspace':user['workspace'],'workspaces':saas.workspaces(user['id'])}
 
     @routes.post('/auth/register')
     async def register(payload: Credentials, request: Request):
         saas=service(request); saas.origin(request); saas.throttle(request,payload.email)
+        if not settings.registration_enabled:
+            raise HTTPException(403,'New registrations are currently paused.')
         if settings.email_verification_required and not saas.mail_configured():
             raise HTTPException(503,'Account signup is temporarily unavailable. Email delivery needs to be configured.')
         salt=secrets.token_hex(16)
@@ -284,7 +332,7 @@ def router(settings, authorize):
                 local = request.client and request.client.host in ('127.0.0.1','::1') and request.url.hostname in ('localhost','127.0.0.1','::1')
                 admin = first and local and not settings.admin_email
                 name=payload.name.strip() or payload.email.split('@')[0]
-                db.execute('INSERT INTO users(id,email,name,salt,password,admin) VALUES (?,?,?,?,?,?)',(user,payload.email,name,salt,digest,int(admin)))
+                db.execute('INSERT INTO users(id,email,name,salt,password,admin,created) VALUES (?,?,?,?,?,?,?)',(user,payload.email,name,salt,digest,int(admin),time.time()))
                 db.execute('INSERT INTO workspaces(id,name,owner,created) VALUES (?,?,?,?)',(selected,name+"’s workspace",user,time.time()))
         except sqlite3.IntegrityError:
             raise HTTPException(409,'This email is already registered. Sign in instead.') from None
@@ -296,10 +344,14 @@ def router(settings, authorize):
     async def login(payload: Credentials, request: Request):
         saas=service(request); saas.origin(request); saas.throttle(request,payload.email)
         with saas.store.connect() as db:
-            row=db.execute('SELECT id,salt,password FROM users WHERE email=?',(payload.email,)).fetchone()
+            row=db.execute('SELECT id,salt,password,suspended FROM users WHERE email=?',(payload.email,)).fetchone()
         candidate=await asyncio.to_thread(password_hash,payload.password,row[1] if row else '00'*16)
         if not row or not hmac.compare_digest(candidate,row[2]):
             raise HTTPException(401,'Email or password is incorrect.')
+        if row[3]:
+            raise HTTPException(403,'This account is suspended. Contact the administrator.')
+        with saas.store.connect() as db:
+            db.execute('UPDATE users SET last_login=? WHERE id=?',(time.time(),row[0]))
         return saas.session_response(row[0],saas.workspaces(row[0])[0]['id'])
 
     @routes.post('/auth/resend-verification',dependencies=[Depends(authorize)])
@@ -394,10 +446,13 @@ def router(settings, authorize):
         return {'success':True}
 
     @routes.post('/billing/checkout',dependencies=[Depends(authorize)])
+    @serialized_billing
     async def checkout(request: Request):
         saas=service(request)
         if not saas.billing_enabled():
             raise HTTPException(503,'Billing is not configured. The administrator must add Stripe keys, a webhook secret and a Pro price ID.')
+        if not settings.upgrades_enabled:
+            raise HTTPException(503,'New paid upgrades are temporarily paused. Existing subscriptions can still be managed.')
         selected=workspace.get();user=identity.get()
         with saas.store.connect() as db:
             row=db.execute('SELECT customer,plan,status FROM workspaces WHERE id=?',(selected,)).fetchone()
@@ -466,12 +521,15 @@ def router(settings, authorize):
             # Fetch current provider state so delayed or reordered events cannot restore an expired plan.
             current=await saas.stripe('GET','subscriptions/'+obj['id'])
             prices={item['price']['id'] for item in current.get('items',{}).get('data',[])}
-            plan='pro' if current.get('status') in ('active','trialing') and settings.stripe_pro_price_id in prices else 'free'
+            plan='pro' if current.get('status') in ('active','trialing') and bool(prices & ({settings.stripe_pro_price_id} | set(settings.stripe_accepted_price_ids))) else 'free'
             with saas.store.connect() as db:
                 db.execute('BEGIN IMMEDIATE')
+                if db.execute('SELECT 1 FROM billing_events WHERE id=?',(event_id,)).fetchone():
+                    return {'received':True}
                 db.execute('UPDATE workspaces SET plan=?,status=?,subscription=? WHERE customer=?',
                            (plan,current.get('status','unknown'),current['id'],current['customer']))
                 db.execute('INSERT OR IGNORE INTO billing_events VALUES (?,?)',(event_id,time.time()))
+                saas.audit('billing.subscription_updated','subscription',current['id'],{'plan':plan,'status':current.get('status','unknown')},db=db,actor='stripe')
         else:
             with saas.store.connect() as db:
                 db.execute('INSERT OR IGNORE INTO billing_events VALUES (?,?)',(event_id,time.time()))
