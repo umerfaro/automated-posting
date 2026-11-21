@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dispatch — Multi-platform posting</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono&display=swap');
+:root{--ink:#152e2c;--muted:#6c7e7a;--line:#dce5df;--paper:#f5f7f2;--green:#126548;--lime:#dbf484}
+*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font:15px "DM Sans",sans-serif}
+a{color:inherit}button,input,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:wait;opacity:.55}
+header{height:88px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 6vw;background:#fff}
+.logo{font-size:26px;font-weight:700;letter-spacing:-1.4px;display:flex;gap:12px;align-items:center}.mark{background:var(--ink);color:var(--lime);border-radius:10px;width:36px;height:36px;display:grid;place-items:center;font-size:25px}
+header a{text-decoration:none;font-weight:600;font-size:14px}.api{font:11px "Space Mono",monospace;border:1px solid var(--line);padding:9px 12px;border-radius:6px}
+main{max-width:1190px;margin:auto;padding:60px 28px 32px}.intro{max-width:680px;margin-bottom:36px}
+.eyebrow{color:var(--green);font-size:12px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase}
+h1{font-size:clamp(36px,5vw,52px);line-height:1.1;font-weight:600;letter-spacing:-2px;margin:14px 0}
+.intro p{color:var(--muted);font-size:17px;line-height:1.6;max-width:560px}
+.workspace{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(280px,1fr);gap:24px;align-items:start}
+.card{background:#fff;border:1px solid var(--line);border-radius:15px;overflow:hidden}.card-body{padding:28px}
+h2{font-size:18px;font-weight:600;margin:0 0 22px}label{display:block;font-size:13px;font-weight:600;margin-bottom:10px}
+textarea{width:100%;min-height:184px;resize:vertical;line-height:1.65;color:var(--ink);border:1px solid #cbd8ce;background:#fcfdfb;border-radius:10px;padding:17px;outline:none}
+textarea:focus,input:focus{border-color:var(--green);outline:2px solid #e6f5db}
+.meta{display:flex;justify-content:space-between;margin:10px 0 24px;font-size:12px;color:var(--muted)}.count{font-family:"Space Mono",monospace}
+.send{background:var(--ink);color:#fff;border:0;border-radius:9px;padding:14px 19px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:18px;width:100%}.send span{color:var(--lime);font-size:20px}
+.note{font-size:12px;color:var(--muted);line-height:1.6;margin:12px 0 0}.error{font-size:13px;color:#b63434;line-height:1.5;margin:0 0 14px;white-space:pre-wrap}.invalid{color:#b63434}
+.platform{display:flex;gap:13px;align-items:center;padding:18px 0;border-bottom:1px solid var(--line)}
+.platform:last-of-type{border-bottom:0}.icon{width:36px;height:36px;border-radius:9px;display:grid;place-items:center;font-weight:700;background:#edf4f1;color:var(--green)}
+.platform-name{font-weight:600;font-size:14px}.platform p{font-size:12px;color:var(--muted);margin:4px 0 0}.indicator{margin-left:auto;width:7px;height:7px;border-radius:50%;background:#c3ccc5;flex-shrink:0}.indicator.ready{background:#298651}
+.side-note{font-size:12px;color:var(--muted);line-height:1.7;background:#f8faf5;border-top:1px solid var(--line);padding:17px 28px}
+.key{margin-top:20px}input{width:100%;border:1px solid var(--line);border-radius:7px;padding:10px 12px}
+.tabs{display:flex;gap:8px;margin-bottom:24px}.tabs button{border:1px solid var(--line);background:white;padding:11px 20px;border-radius:8px;font-weight:600;color:var(--muted)}.tabs button[aria-selected=true]{background:var(--ink);color:#fff}
+select{width:100%;padding:10px;border:1px solid var(--line);border-radius:7px;background:white;font:inherit;color:var(--ink)}
+.video-fields{display:grid;gap:18px}.video-fields textarea{min-height:100px}.checks label{display:flex;gap:9px;align-items:start;font-weight:400;line-height:1.5}.checks input{width:auto;margin-top:3px}.connection{padding:18px 0;border-bottom:1px solid var(--line)}.connection:last-child{border:0}.connection strong{font-size:14px}.connection small{display:block;color:var(--muted);margin:7px 0;line-height:1.6}.connect{border:1px solid var(--line);background:white;color:var(--green);border-radius:6px;padding:7px 12px;font-weight:600}.video-preview{width:100%;max-height:240px;background:#152e2c;border-radius:8px}.status.pending{color:#8a5910;background:#fff4da}
+.results{margin-top:34px}.result-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:12px}.result-head h2{margin:0}.summary{font-size:13px;color:var(--muted)}.result-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.result{background:white;border:1px solid var(--line);border-radius:11px;padding:22px;min-width:0}.result-title{display:flex;justify-content:space-between;gap:8px;align-items:center;font-size:15px;font-weight:600}
+.status{font-size:10px;text-transform:uppercase;letter-spacing:.5px;border-radius:5px;padding:5px 7px;background:#eaf5df;color:#3b6d24}.status.failed{background:#fff0eb;color:#a2452b}
+.result p{font-size:12px;color:var(--muted);line-height:1.7;overflow-wrap:anywhere;margin-bottom:0}.result a{display:inline-block;font-size:13px;font-weight:600;margin-top:18px;color:var(--green)}
+details{margin-top:18px;color:var(--muted);font-size:12px}summary{cursor:pointer}pre{background:#eaf0e8;padding:18px;border-radius:9px;overflow:auto;line-height:1.6}
+footer{display:flex;justify-content:space-between;gap:16px;margin-top:40px;padding-top:18px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}[hidden]{display:none!important}
+@media(max-width:760px){header{padding:0 22px;height:72px}.api{display:none}main{padding:36px 18px}.workspace,.result-grid{grid-template-columns:1fr}.card-body{padding:22px}h1{letter-spacing:-1px}.result-head,footer{align-items:start;flex-direction:column}.intro{margin-bottom:25px}}
+</style>
+</head>
+<body>
+<header><div class="logo"><span class="mark">↗</span>dispatch</div><nav><a href="/docs" target="_blank" rel="noopener">API documentation ↗</a></nav><span class="api">POST /posting</span></header>
+<main>
+<div class="intro"><span class="eyebrow">Multi-platform publishing</span><h1 id="intro-title">One message.<br>Three destinations.</h1><p id="intro-description">Publish a short update with a single call to action. Get a delivery result for every platform.</p></div>
+<div class="key" id="key-field" hidden><label for="api-key">Application API key</label><input id="api-key" type="password" autocomplete="off"><p class="note">Used for this page session.</p></div><div class="tabs" role="tablist" aria-label="Post type"><button type="button" id="text-tab" role="tab" aria-selected="true" aria-controls="text-workspace">Text message</button><button type="button" id="video-tab" role="tab" aria-selected="false" aria-controls="video-workspace">Video post</button></div>
+<div class="workspace" id="text-workspace" role="tabpanel" aria-labelledby="text-tab">
+<section class="card"><form id="composer" class="card-body">
+<h2>Compose your message</h2><label for="message">Message</label>
+<textarea id="message" placeholder="Something worth sharing. Add your message and one https:// link." maxlength="200" required></textarea>
+<div class="meta"><span>Include exactly one public HTTP or HTTPS link.</span><span class="count" id="count">0 / 200</span></div>
+
+<p id="error" class="error" role="alert" hidden></p>
+<button type="submit" class="send" id="send">Publish to all platforms <span aria-hidden="true">↗</span></button>
+<p class="note">This publishes to the accounts configured on this server. Each platform returns its own result.</p>
+</form></section>
+<aside class="card"><div class="card-body"><h2>Connected destinations</h2><div id="platforms" aria-live="polite">Checking configuration…</div></div><div class="side-note">Platform credentials are configured in the server’s .env file. “Configured” means credentials are present; authentication is checked when publishing.</div></aside>
+</div>
+<div class="workspace" id="video-workspace" role="tabpanel" aria-labelledby="video-tab" hidden>
+<section class="card"><form id="video-composer" class="card-body video-fields">
+<h2>Publish a short video</h2>
+<div><label for="video-file">Video file</label><input id="video-file" type="file" accept="video/mp4" required><p class="note" id="video-limit">H.264 MP4 · up to 180 seconds · 250 MB maximum</p></div>
+<video class="video-preview" id="video-preview" controls hidden></video>
+<div><label for="video-title">Title</label><input id="video-title" maxlength="100" required placeholder="A title for this video"></div>
+<div><label for="video-caption">Caption / description</label><textarea id="video-caption" maxlength="2200" placeholder="Add context and hashtags"></textarea></div>
+<div><label for="youtube-privacy">YouTube visibility</label><select id="youtube-privacy"><option value="private">Private</option><option value="unlisted">Unlisted</option><option value="public">Public</option></select></div>
+<div><label for="made-for-kids">YouTube audience</label><select id="made-for-kids" required><option value="">Select audience</option><option value="false">Not made for kids</option><option value="true">Made for kids</option></select></div>
+<div><label for="tiktok-privacy">TikTok visibility</label><select id="tiktok-privacy"><option value="">Connect TikTok and load its available options</option></select><p class="note" id="tiktok-creator"></p></div>
+<div class="checks">
+<label><input id="disable-comment" type="checkbox" checked>Disable TikTok comments</label>
+<label><input id="disable-duet" type="checkbox" checked>Disable TikTok Duet</label>
+<label><input id="disable-stitch" type="checkbox" checked>Disable TikTok Stitch</label>
+<label><input id="video-consent" type="checkbox" required>I own or have permission to publish this video and authorize posting to my connected accounts. Instagram posts use the account’s platform visibility.</label>
+</div>
+<p id="video-error" class="error" role="alert" hidden></p>
+<button class="send" id="video-send" type="submit">Publish video <span aria-hidden="true">↗</span></button>
+<p class="note">Each platform receives this video independently. Processing may take a few minutes. A pending result means publication is still unconfirmed.</p>
+</form></section>
+<aside class="card"><div class="card-body"><h2>Video accounts</h2><div id="video-accounts">Loading accounts…</div><button class="connect" type="button" id="reload-accounts">Refresh connections</button></div>
+<div class="side-note">Connect accounts through each platform’s sign-in page. Developer app credentials go in .env. Instagram needs a public HTTPS media address. TikTok availability and visibility depend on app review and creator permissions.</div></aside>
+</div>
+<section class="results" id="results" hidden aria-live="polite"><div class="result-head"><h2>Delivery report</h2><span class="summary" id="summary"></span></div><div class="result-grid" id="result-grid"></div><details><summary>View API response</summary><pre id="response"></pre></details></section>
+<footer><span>All posting dates and times are UTC.</span><span>FastAPI · Mastodon · Bluesky · Telegram</span></footer>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let requestKey = null, lastMessage = null, uncertain = false;
+function error(text) { $("error").textContent = text; $("error").hidden = !text; }
+$("message").addEventListener("input", () => { $("count").textContent = Array.from($("message").value).length + " / 200"; });
+async function configure() {
+  try {
+    const response = await fetch("/config");
+    if (!response.ok) throw new Error("Cannot read platform configuration.");
+    const data = await response.json();
+    $("key-field").hidden = !data.auth_required;
+    $("platforms").replaceChildren();
+    for (const platform of data.platforms) {
+      const row = document.createElement("div"); row.className = "platform";
+      const icon = document.createElement("span"); icon.className = "icon"; icon.textContent = platform.name[0];
+      const body = document.createElement("div"), name = document.createElement("div"), status = document.createElement("p");
+      name.className = "platform-name"; name.textContent = platform.name;
+      status.textContent = platform.configured ? "Configured" : "Credentials required";
+      const dot = document.createElement("span"); dot.className = "indicator" + (platform.configured ? " ready" : "");
+      body.append(name, status); row.append(icon, body, dot); $("platforms").append(row);
+    }
+  } catch (e) { $("platforms").textContent = e.message; }
+}
+function report(data) {
+  $("results").hidden = false; $("response").textContent = JSON.stringify(data, null, 2);
+  const successes = data.results.filter(result => result.status === "success").length;
+  $("summary").textContent = successes + " of " + data.results.length + " published";
+  $("result-grid").replaceChildren();
+  for (const result of data.results) {
+    const card = document.createElement("article"); card.className = "result";
+    const title = document.createElement("div"); title.className = "result-title";
+    const name = document.createElement("span"); name.textContent = result.platform;
+    const status = document.createElement("span"); status.className = "status " + result.status; status.textContent = result.status;
+    title.append(name, status); card.append(title);
+    const access = document.createElement("p"); access.textContent = result.public_access ? "Public access verified" : "Public access unverified"; card.append(access);
+    if (result.date) { const at = document.createElement("p"); at.textContent = result.date + " · " + result.time + " UTC"; card.append(at); }
+    if (result.error) { const text = document.createElement("p"); text.textContent = result.error; card.append(text); }
+    if (result.posted_url && /^https:\/\//.test(result.posted_url)) {
+      const link = document.createElement("a"); link.href = result.posted_url; link.textContent = "Open published post ↗"; link.target = "_blank"; link.rel = "noopener noreferrer"; card.append(link);
+    }
+    $("result-grid").append(card);
+  }
+}
+$("composer").addEventListener("submit", async event => {
+  event.preventDefault(); error("");
+  const message = $("message").value;
+  if (Array.from(message).length > 200) return error("Message must be 200 characters or fewer.");
+  if (uncertain && message !== lastMessage) return error("The previous delivery was interrupted. Check your platform accounts before sending a different message, then reload this page.");
+  if (!requestKey || (message !== lastMessage && !uncertain)) requestKey = crypto.randomUUID();
+  lastMessage = message;
+  $("send").disabled = true; $("send").textContent = "Publishing…";
+  try {
+    const headers = {"Content-Type":"application/json", "Idempotency-Key":requestKey};
+    if ($("api-key").value) headers["X-API-Key"] = $("api-key").value;
+    const response = await fetch("/posting", {method:"POST", headers, body:JSON.stringify({message})});
+    const data = await response.json();
+    if (!response.ok) {
+      if (response.status === 422 || response.status === 401) { requestKey = null; uncertain = false; }
+      else uncertain = true;
+      throw new Error(Array.isArray(data.detail) ? data.detail.map(item => item.msg).join("\n") : (data.detail || "Request failed."));
+    }
+    uncertain = false; report(data);
+  } catch (e) {
+    if (e instanceof TypeError) { uncertain = true; error("Delivery could not be confirmed. Submit the same message to check its saved result. Check your accounts before starting another request."); }
+    else error(e.message);
+  } finally { $("send").disabled = false; $("send").innerHTML = 'Publish to all platforms <span aria-hidden="true">↗</span>'; }
+});
+let videoKey = null, videoIdentity = null, videoUncertain = false, previewUrl = null;
+function apiHeaders() {
+  return $("api-key").value ? {"X-API-Key": $("api-key").value} : {};
+}
+async function jsonResponse(response) {
+  const data = await response.json();
+  if (!response.ok) { const error = new Error(Array.isArray(data.detail) ? data.detail.map(item => item.msg).join("; ") : (data.detail || "Request failed.")); error.status = response.status; throw error; }
+  return data;
+}
+async function videoAccounts() {
+  try {
+    const data = await jsonResponse(await fetch("/video/accounts", {headers:apiHeaders()}));
+    $("video-limit").textContent = "H.264 MP4 · up to 180 seconds · " + data.max_video_mb + " MB maximum";
+    $("video-accounts").replaceChildren();
+    let connectedTikTok = false;
+    for (const account of data.accounts) {
+      const row = document.createElement("div"); row.className = "connection";
+      const title = document.createElement("strong"); title.textContent = account.name;
+      const status = document.createElement("small");
+      status.textContent = account.connected ? "Connected · " + account.account_name : account.configured ? "Ready to connect" : "Developer app setup required in .env";
+      const connect = document.createElement("button"); connect.type = "button"; connect.className = "connect"; connect.textContent = account.connected ? "Reconnect" : "Connect"; connect.disabled = !account.configured;
+      connect.addEventListener("click", async () => {
+        try {
+          connect.disabled = true;
+          const response = await jsonResponse(await fetch("/video/accounts/" + account.platform + "/connect", {method:"POST", headers:apiHeaders()}));
+          window.location.assign(response.authorization_url);
+        } catch (e) { $("video-error").hidden = false; $("video-error").textContent = e.message; connect.disabled = false; }
+      });
+      row.append(title, status, connect); $("video-accounts").append(row);
+      if (account.platform === "tiktok") connectedTikTok = account.connected;
+    }
+    if (connectedTikTok) {
+      const creator = await jsonResponse(await fetch("/video/tiktok-creator", {headers:apiHeaders()}));
+      $("tiktok-creator").textContent = (creator.creator_nickname || creator.creator_username || "TikTok creator") + " · up to " + creator.max_video_post_duration_sec + " seconds";
+      $("tiktok-privacy").replaceChildren(new Option("Choose TikTok visibility", ""));
+      for (const privacy of creator.privacy_level_options || []) $("tiktok-privacy").add(new Option(privacy.replaceAll("_"," ").toLowerCase(), privacy));
+      for (const kind of ["comment","duet","stitch"]) {
+        const checkbox = $("disable-" + kind);
+        checkbox.disabled = Boolean(creator[kind + "_disabled"]);
+        if (checkbox.disabled) checkbox.checked = true;
+      }
+    }
+  } catch (e) { $("video-accounts").textContent = e.message; }
+}
+function selectTab(video) {
+  $("intro-title").innerHTML = video ? "One video.<br>Three platforms." : "One message.<br>Three destinations.";
+  $("intro-description").textContent = video ? "Connect your accounts, review your video, and publish with a delivery result for each platform." : "Publish a short update with a single call to action. Get a delivery result for every platform.";
+  $("text-workspace").hidden = video; $("video-workspace").hidden = !video; $("results").hidden = true;
+  $("text-tab").setAttribute("aria-selected", String(!video)); $("video-tab").setAttribute("aria-selected", String(video));
+  if (video) videoAccounts();
+}
+$("text-tab").addEventListener("click", () => selectTab(false));
+$("video-tab").addEventListener("click", () => selectTab(true));
+$("reload-accounts").addEventListener("click", videoAccounts);
+$("video-file").addEventListener("change", () => {
+  if (previewUrl) URL.revokeObjectURL(previewUrl);
+  const file = $("video-file").files[0];
+  $("video-preview").hidden = !file;
+  if (file) { previewUrl = URL.createObjectURL(file); $("video-preview").src = previewUrl; }
+  videoKey = null;
+});
+$("video-composer").addEventListener("submit", async event => {
+  event.preventDefault(); $("video-error").hidden = true;
+  const file = $("video-file").files[0]; if (!file) return;
+  const form = new FormData();
+  form.append("file",file);
+  for (const [name,id] of [["title","video-title"],["caption","video-caption"],["youtube_privacy","youtube-privacy"],["tiktok_privacy","tiktok-privacy"],["made_for_kids","made-for-kids"]]) form.append(name,$(id).value);
+  for (const [name,id] of [["consent","video-consent"],["disable_comment","disable-comment"],["disable_duet","disable-duet"],["disable_stitch","disable-stitch"]]) form.append(name,String($(id).checked));
+  const identity = JSON.stringify([file.name,file.size,file.lastModified,...Array.from(form.entries()).filter(([name])=>name!=="file")]);
+  if (videoUncertain && identity !== videoIdentity) { $("video-error").hidden=false; $("video-error").textContent="Check the previous upload on your accounts before starting another request."; return; }
+  if (!videoKey || identity !== videoIdentity) videoKey=crypto.randomUUID();
+  videoIdentity=identity; $("video-send").disabled=true; $("video-send").textContent="Uploading and processing…";
+  try {
+    const response=await fetch("/video-posting",{method:"POST",headers:{...apiHeaders(),"Idempotency-Key":videoKey},body:form});
+    const data=await jsonResponse(response);
+    videoUncertain=false; report(data);
+  } catch (e) { videoUncertain=![401,413,422].includes(e.status); if (!videoUncertain) videoKey=null; $("video-error").hidden=false; $("video-error").textContent=e.message; }
+  finally { $("video-send").disabled=false; $("video-send").innerHTML='Publish video <span aria-hidden="true">↗</span>'; }
+});
+
+configure();
+</script>
+</body>
+</html>
