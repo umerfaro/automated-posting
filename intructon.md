@@ -120,3 +120,5 @@ Live external publishing remains untested pending credentials and approved accou
 - Live checks still require your own credentials and provider authorization.
 
 - Browser credential forms verified at desktop and 390-pixel mobile widths, including redirect display, Save payloads, secret clearing and failure feedback. Browser Save checks intercepted the request, so no fake credentials were persisted on the running server.
+
+All six setup forms include links to official credential pages and numbered setup steps. Mastodon’s Development link follows the server URL entered in the form. Links open in a new tab so setup details stay available.

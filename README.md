@@ -114,3 +114,5 @@ These networks have publication APIs suitable for the assignment. LLM completion
 ## Design and continuation
 
 [artchitectrue.md](artchitectrue.md) describes components and decisions. [intructon.md](intructon.md) records setup, completed work, verification and the next account steps. Filenames follow the requested deliverables.
+
+All six setup forms include links to official credential pages and numbered setup steps. Mastodon’s Development link follows the server URL entered in the form. Links open in a new tab so setup details stay available.

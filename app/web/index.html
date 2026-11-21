@@ -39,7 +39,7 @@ details{margin-top:18px;color:var(--muted);font-size:12px}summary{cursor:pointer
 footer{display:flex;justify-content:space-between;gap:16px;margin-top:40px;padding-top:18px;border-top:1px solid var(--line);font-size:11px;color:var(--muted)}[hidden]{display:none!important}
 @media(max-width:760px){header{padding:0 22px;height:72px}.api{display:none}main{padding:36px 18px}.workspace,.result-grid{grid-template-columns:1fr}.card-body{padding:22px}h1{letter-spacing:-1px}.result-head,footer{align-items:start;flex-direction:column}.intro{margin-bottom:25px}}
 .actions>div{display:flex;gap:7px;flex-wrap:wrap}.actions .connection-feedback{flex-basis:100%}.actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.connection-feedback{font-size:12px;line-height:1.6;margin:10px 0 0;overflow-wrap:anywhere}.connection-feedback[data-success="false"]{color:#b63434}
-dialog{color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:28px;width:540px;max-width:calc(100vw - 32px);max-height:90vh}dialog::backdrop{background:#152e2c80}dialog form{display:grid;gap:16px}dialog h2{margin:0}dialog p{line-height:1.65;color:var(--muted);font-size:13px;margin:0}dialog label{margin-bottom:7px}dialog code{display:block;overflow-wrap:anywhere;background:var(--paper);padding:12px;border-radius:8px;font-size:12px}.dialog-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.dialog-head button{background:none;border:0;font-size:24px;color:var(--muted)}.setup-fields{display:grid;gap:16px}
+dialog{color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:28px;width:540px;max-width:calc(100vw - 32px);max-height:90vh}dialog::backdrop{background:#152e2c80}.setup-guide{background:var(--paper);padding:16px;border-radius:9px;font-size:13px;line-height:1.65}.setup-guide nav{display:flex;flex-wrap:wrap;gap:8px 16px}.setup-guide a{color:var(--green);font-weight:600;text-underline-offset:3px}.setup-guide ol{padding-left:20px;margin:12px 0 0}.setup-guide li+li{margin-top:5px}dialog form{display:grid;gap:16px}dialog h2{margin:0}dialog p{line-height:1.65;color:var(--muted);font-size:13px;margin:0}dialog label{margin-bottom:7px}dialog code{display:block;overflow-wrap:anywhere;background:var(--paper);padding:12px;border-radius:8px;font-size:12px}.dialog-head{display:flex;justify-content:space-between;align-items:center;gap:12px}.dialog-head button{background:none;border:0;font-size:24px;color:var(--muted)}.setup-fields{display:grid;gap:16px}
 </style>
 </head>
 <body>
@@ -87,7 +87,7 @@ dialog{color:var(--ink);border:1px solid var(--line);border-radius:16px;padding:
 </main>
 <dialog id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form">
 <div class="dialog-head"><h2 id="settings-title">Platform setup</h2><button type="button" id="settings-close" aria-label="Close setup">×</button></div>
-<p id="settings-help"></p><div class="setup-fields" id="settings-fields"></div>
+<p id="settings-help"></p><div id="settings-guide" class="setup-guide"></div><div class="setup-fields" id="settings-fields"></div>
 <div id="redirect-section" hidden><label>Authorised redirect URI</label><code id="settings-redirect"></code><p>Register this exact address in your developer app. Open Dispatch using the application address when connecting.</p></div>
 <p>Leave a saved password or token blank to keep it. Credentials are stored in the local database and never returned to this page.</p>
 <p id="settings-feedback" role="status" aria-live="polite"></p>
@@ -257,11 +257,62 @@ function connectionActions(platform) {
   const container = document.createElement("div"); container.append(setup, test, feedback);
   actions.append(container); return actions;
 }
+const setupGuides = {
+  mastodon: {
+    links: [["Open your server’s Development settings", null], ["Official token guide", "https://docs.joinmastodon.org/client/authorized/"]],
+    steps: ["Set Server URL to the Mastodon server where your account lives. The Development link follows that address.", "Sign in, open Development, and create a new application. Enable write:statuses plus profile or read:accounts.", "Copy Your access token into Access token below, save, then test the connection."]
+  },
+  bluesky: {
+    links: [["Create a Bluesky app password", "https://bsky.app/settings/app-passwords"], ["Official API quickstart", "https://docs.bsky.app/docs/get-started"]],
+    steps: ["Sign in to Bluesky and open App passwords. Create a password for Dispatch.", "Enter your handle or email and the new app password below. Use the PDS server hosting your account, usually https://bsky.social.", "Save settings, then test the connection."]
+  },
+  telegram: {
+    links: [["Open BotFather", "https://t.me/BotFather"], ["Official bot setup guide", "https://core.telegram.org/bots/tutorial"]],
+    steps: ["Open the verified @BotFather and send /newbot, or use /mybots for an existing bot. Copy its API token.", "Add the bot as an administrator of your public channel and allow it to post messages.", "Enter the bot token and channel’s @username below, save, then test the connection."]
+  },
+  youtube: {
+    links: [["Open Google Cloud credentials", "https://console.cloud.google.com/apis/credentials"], ["Enable YouTube Data API v3", "https://console.cloud.google.com/apis/library/youtube.googleapis.com"], ["Official OAuth setup guide", "https://developers.google.com/identity/protocols/oauth2/web-server"]],
+    steps: ["Select or create a Google Cloud project and enable YouTube Data API v3.", "Configure the OAuth consent screen. Add your Google account as a test user while the app is in testing.", "Create an OAuth client ID of type Web application. Add the exact Authorised redirect URI shown below.", "Paste its Client ID and Client secret here and save. Close setup, click Connect, then test the authorized account."]
+  },
+  instagram: {
+    links: [["Open Meta developer apps", "https://developers.facebook.com/apps/"], ["Official Instagram Login setup guide", "https://developers.facebook.com/documentation/instagram-platform/instagram-api-with-instagram-login/business-login"]],
+    steps: ["Create or select a Meta developer app with Instagram API and Instagram Login. Use a Business or Creator Instagram account.", "Enable instagram_business_basic and instagram_business_content_publish. Register the exact redirect URI shown below and configure tester access or app review as required.", "Copy the App ID and App secret for your Instagram Login configuration into this form. Set your application and media addresses to publicly reachable HTTPS origins.", "Save settings, close setup, and click Connect. Authorize your account, then test the connection."]
+  },
+  tiktok: {
+    links: [["Open TikTok developer apps", "https://developers.tiktok.com/portal/apps"], ["Official app registration guide", "https://developers.tiktok.com/doc/getting-started-create-an-app/"]],
+    steps: ["Register or select an app in TikTok for Developers. Add Login Kit and the Content Posting API.", "Enable user.info.basic and video.publish. Register the exact HTTPS redirect URI shown below.", "Copy the Client key and Client secret into this form and save. Close setup and click Connect to authorize the creator account.", "Test the connection. Available visibility and publishing permissions depend on creator access and app review."]
+  }
+};
+function renderSetupGuide(platform) {
+  const guide = setupGuides[platform], container = $("settings-guide"), nav = document.createElement("nav"), steps = document.createElement("ol");
+  nav.setAttribute("aria-label", "Credential setup resources");
+  let mastodonLink = null;
+  for (const [label, url] of guide.links) {
+    const link = document.createElement("a"); link.textContent = label + " ↗"; link.target = "_blank"; link.rel = "noopener noreferrer";
+    if (url) link.href = url;
+    else mastodonLink = link;
+    nav.append(link);
+  }
+  for (const text of guide.steps) { const step = document.createElement("li"); step.textContent = text; steps.append(step); }
+  container.replaceChildren(nav, steps);
+  if (mastodonLink) {
+    const input = $("setup-mastodon_url");
+    function updateServerLink() {
+      try {
+        const url = new URL(input.value);
+        if (url.protocol !== "https:" || url.username || url.password) throw new Error("Invalid server URL");
+        mastodonLink.href = url.origin + "/settings/applications";
+        mastodonLink.removeAttribute("aria-disabled");
+      } catch (_) { mastodonLink.removeAttribute("href"); mastodonLink.setAttribute("aria-disabled", "true"); }
+    }
+    updateServerLink(); input.addEventListener("input", updateServerLink);
+  }
+}
 let setupPlatform = null;
 async function openSettings(platform) {
   setupPlatform = platform; $("settings-feedback").textContent = "Loading settings…"; $("settings-fields").replaceChildren();
   $("settings-title").textContent = ({youtube:"YouTube",instagram:"Instagram",tiktok:"TikTok",mastodon:"Mastodon",bluesky:"Bluesky",telegram:"Telegram"}[platform]) + " setup";
-  $("settings-help").textContent = ""; $("redirect-section").hidden = true; $("settings-save").disabled = true;
+  $("settings-help").textContent = ""; $("settings-guide").replaceChildren(); $("redirect-section").hidden = true; $("settings-save").disabled = true;
   $("settings-dialog").showModal();
   try {
     const data = await jsonResponse(await fetch("/settings/" + platform, {headers:apiHeaders()}));
@@ -275,6 +326,7 @@ async function openSettings(platform) {
       label.htmlFor = input.id; label.textContent = field.label; wrap.append(label, input); $("settings-fields").append(wrap);
       if (field.name === "app_base_url") input.addEventListener("input", () => { $("settings-redirect").textContent = input.value.replace(/\/$/, "") + "/oauth/" + platform + "/callback"; });
     }
+    renderSetupGuide(platform);
     $("redirect-section").hidden = !data.redirect_uri; $("settings-redirect").textContent = data.redirect_uri || "";
     $("settings-feedback").textContent = ""; $("settings-save").disabled = false;
   } catch (e) { $("settings-feedback").textContent = e.message; }
